@@ -18897,6 +18897,11 @@ function updateValidDecisionUI(){
   }
 }
 
+/** Recharge la page après une approbation (laisse le temps à la sync socket / HTTP). */
+function _reloadAfterApproval(){
+  setTimeout(function(){ try { location.reload(); } catch(e) {} }, 450);
+}
+
 function submitValidation(){
   if(!_validCtx){ showT('Contexte invalide','w'); return; }
   if(!CU){ showT('Non connecté','w'); return; }
@@ -18954,6 +18959,10 @@ function submitValidation(){
   if(globalStatus==='approuve')      showT('🎉 Dossier entièrement approuvé !','s');
   else if(globalStatus==='rejete')   showT('❌ Dossier rejeté par '+CU.name,'d');
   else showT(decLabel+' — En attente des validations suivantes','s');
+
+  if (decision === 'approuve' || decision === 'approuve_conditions') {
+    _reloadAfterApproval();
+  }
 }
 
 // ─── Render approbations page ───
@@ -22704,6 +22713,7 @@ window.approuverDemande = function(id){
       if(typeof addLog==='function') addLog('demande','Approuvée: '+demandes[idx].ref);
       renderDemandesPage();
       if(typeof showT==='function') showT('✅ Demande approuvée','s');
+      if(typeof _reloadAfterApproval==='function') _reloadAfterApproval();
     });
   }
 };
@@ -23667,6 +23677,7 @@ window.approuverInscription = function(id){
 
   window.refreshInscriptions();
   if(typeof renderAccs==='function') setTimeout(renderAccs, 200);
+  if(typeof _reloadAfterApproval==='function') _reloadAfterApproval();
 };
 
 window.modifierRoleInscription = function(id){
