@@ -13,15 +13,7 @@ Ce projet est hébergé sur **Render.com** (serveur gratuit).
 
 ---
 
-## 🔐 Comptes par défaut
 
-| Utilisateur | Mot de passe | Rôle |
-|---|---|---|
-| `admin` | `ppl2024` | Administrateur |
-| `logistique` | `flotte123` | Gestionnaire |
-| `operateur` | `op2024` | Opérateur |
-
-> ⚠️ **Important :** Changer les mots de passe après la première connexion
 
 ---
 
@@ -67,14 +59,7 @@ flotte-ppl/
 
 ---
 
-## ⚙️ Variables d'environnement
 
-| Variable | Description | Défaut |
-|---|---|---|
-| `PORT` | Port d'écoute | `3000` |
-| `JWT_SECRET` | Clé secrète JWT | `flotte_ppl_secret_2024_local` |
-
----
 
 *Version 20 — Synchronisation temps réel multi-utilisateurs*
 "# Flotte-Auto-PPL" 
