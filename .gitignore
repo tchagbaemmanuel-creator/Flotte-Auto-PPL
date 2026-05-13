@@ -1,0 +1,8 @@
+node_modules/
+data/flotte_data.json
+data/users.json
+*.log
+.env
+.DS_Store
+Thumbs.db
+*.tmp
