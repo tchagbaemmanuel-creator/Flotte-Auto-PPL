@@ -91,6 +91,7 @@ function loadData() {
 
 let mongoClient     = null;
 let mongoCollection = null;
+let mongoUsersCollection = null;
 /** Dernière erreur de connexion Mongo (message seul, jamais l’URI). */
 let mongoConnectError = null;
 
@@ -101,6 +102,61 @@ async function saveDataMongo(data) {
     { _id: 'main', data, updatedAt: new Date() },
     { upsert: true }
   );
+  await persistUsersToMongoTable(data);
+}
+
+/** Identifiant stable pour un document dans la collection `users` (id métier ou username). */
+function userStableId(u) {
+  if (!u || typeof u !== 'object') return null;
+  if (u.id != null && String(u.id).trim() !== '') return String(u.id);
+  if (u.username != null && String(u.username).trim() !== '') return String(u.username);
+  return null;
+}
+
+/** Lit tous les comptes depuis la collection Mongo `users`. */
+async function loadUsersFromMongoTable() {
+  if (!mongoUsersCollection) return [];
+  const docs = await mongoUsersCollection.find({}).toArray();
+  return docs.map((d) => {
+    const { _id, ...rest } = d;
+    return rest;
+  });
+}
+
+/** Enregistre chaque compte de p5_ac / p5_accounts comme un document dans `users` (_id = id ou username). */
+async function persistUsersToMongoTable(data) {
+  if (!mongoUsersCollection || !data) return;
+  const list = data.p5_ac || data.p5_accounts;
+  if (!Array.isArray(list) || list.length === 0) return;
+  const ops = [];
+  for (const u of list) {
+    const sid = userStableId(u);
+    if (!sid) continue;
+    const doc = { ...u, _id: sid };
+    ops.push({ replaceOne: { filter: { _id: sid }, replacement: doc, upsert: true } });
+  }
+  if (!ops.length) return;
+  try {
+    await mongoUsersCollection.bulkWrite(ops, { ordered: false });
+  } catch (e) {
+    console.error('[MONGO] Écriture collection users:', e.message);
+  }
+}
+
+/** Si la mémoire n’a pas de comptes : les charger depuis `users`. Sinon : aligner `users` sur la mémoire. */
+async function syncUsersCollectionWithDb() {
+  if (!mongoUsersCollection) return;
+  const accMain = DB.p5_ac || DB.p5_accounts || [];
+  if (accMain.length) {
+    await persistUsersToMongoTable(DB);
+    console.log(`[MONGO] Collection users : ${accMain.length} document(s) synchronisé(s).`);
+    return;
+  }
+  const fromTable = await loadUsersFromMongoTable();
+  if (fromTable.length) {
+    DB.p5_ac = fromTable;
+    console.log(`[MONGO] ${fromTable.length} compte(s) chargé(s) depuis la collection users.`);
+  }
 }
 
 function saveData(data) {
@@ -170,6 +226,7 @@ async function initMongo() {
     await mongoClient.connect();
     const mdb = mongoClient.db(MONGODB_DB_NAME);
     mongoCollection = mdb.collection('app_state');
+    mongoUsersCollection = mdb.collection('users');
     const doc = await mongoCollection.findOne({ _id: 'main' });
     const fromMongo = doc && doc.data && typeof doc.data === 'object' ? doc.data : null;
     const keysMongo = fromMongo ? Object.keys(fromMongo).length : 0;
@@ -183,6 +240,7 @@ async function initMongo() {
     } else {
       console.log(`[MONGO] Connecté — base vide (prêt à enregistrer dans ${MONGODB_DB_NAME}.app_state).`);
     }
+    await syncUsersCollectionWithDb();
     mongoConnectError = null;
   } catch (e) {
     mongoConnectError = e.message || String(e);
@@ -198,6 +256,7 @@ async function initMongo() {
       console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
     }
     mongoCollection = null;
+    mongoUsersCollection = null;
     if (mongoClient) {
       try { await mongoClient.close(); } catch (_) {}
     }
@@ -260,12 +319,19 @@ app.get('/FlottePPL_v30.html', (req, res) => {
 });
 
 // ── AUTH : Login ──
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Champs manquants' });
 
-  // Chercher d'abord dans la DB (comptes créés dans l'appli)
   let users = loadUsers();
+  if (mongoUsersCollection) {
+    try {
+      const fromMongo = await loadUsersFromMongoTable();
+      if (fromMongo.length) users = fromMongo;
+    } catch (e) {
+      console.error('[AUTH] Lecture collection users:', e.message);
+    }
+  }
   const dbAccounts = DB['p5_ac'] || DB['p5_accounts'] || [];
   if (dbAccounts.length) users = dbAccounts;
 
@@ -355,6 +421,7 @@ app.get('/api/status', (req, res) => {
     uptime: Math.floor(process.uptime()) + 's',
     mongo: !!mongoCollection,
     render: IS_RENDER,
+    mongoUsersTable: !!mongoUsersCollection,
     mongoUriSource: MONGO_URI_SOURCE,
     mongoUriResolved: !!MONGODB_URI,
     mongoEnvPresent: mongoEnvHints,
