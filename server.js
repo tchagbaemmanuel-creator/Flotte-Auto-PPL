@@ -27,20 +27,34 @@ function normalizeEnvString(v) {
   return s;
 }
 
-/** Première URI Mongo valide parmi les variables usuelles (Render / autres hébergeurs). */
-function resolveMongoUri() {
+/** Construit une URI `mongodb+srv` avec identifiants encodés (évite les erreurs @ < > dans une seule chaîne). */
+function buildMongoUriFromParts() {
+  const user = normalizeEnvString(process.env.MONGODB_USER || process.env.MONGO_USER);
+  const host = normalizeEnvString(process.env.MONGODB_HOST || process.env.MONGO_HOST);
+  const passRaw = process.env.MONGODB_PASSWORD ?? process.env.MONGO_PASSWORD;
+  if (passRaw == null || user === '' || host === '') return '';
+  const pass = String(passRaw).replace(/\r/g, '');
+  if (pass === '') return '';
+  const dbName = ((process.env.MONGODB_DB_NAME || 'flotte_ppl').trim().replace(/^\/+|\/+$/g, '')) || 'flotte_ppl';
+  return `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}/${dbName}?retryWrites=true&w=majority`;
+}
+
+/** URI finale + origine (`split` = variables séparées, prioritaire sur une URI collée). */
+function resolveMongoUriAndSource() {
+  const fromParts = buildMongoUriFromParts();
+  if (fromParts) return { uri: fromParts, source: 'split' };
   const keys = ['MONGODB_URI', 'MONGO_URI', 'DATABASE_URL'];
   for (const k of keys) {
     const u = normalizeEnvString(process.env[k]);
-    if (u.startsWith('mongodb://') || u.startsWith('mongodb+srv://')) return u;
+    if (u.startsWith('mongodb://') || u.startsWith('mongodb+srv://')) return { uri: u, source: 'uri' };
   }
-  return '';
+  return { uri: '', source: 'none' };
 }
 
 // ─── CONFIG ───────────────────────────────────────────────────
 const PORT          = process.env.PORT || 3000;
 const JWT_SECRET    = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
-const MONGODB_URI   = resolveMongoUri();
+const { uri: MONGODB_URI, source: MONGO_URI_SOURCE } = resolveMongoUriAndSource();
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'flotte_ppl';
 /** Render injecte RENDER=true ; le disque du conteneur n’est pas persistant entre redéploiements. */
 const IS_RENDER     = process.env.RENDER === 'true';
@@ -137,17 +151,22 @@ let DB = IS_RENDER && MONGODB_URI ? {} : loadData();
 async function initMongo() {
   mongoConnectError = null;
   if (IS_RENDER && !MONGODB_URI) {
-    console.warn('[RENDER] MONGODB_URI manquant : les données seront perdues au redémarrage / redéploiement. Ajoutez la variable sur Render (Atlas → Connect → Drivers).');
+    console.warn('[RENDER] MongoDB non configuré : ajoutez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (recommandé), ou MONGODB_URI complète (Atlas → Connect).');
   }
   if (!MONGODB_URI) {
-    console.log('[MONGO] URI Mongo absente — essayez la clé exacte MONGODB_URI, ou MONGO_URI / DATABASE_URL (chaîne mongodb…). Persistance : fichiers JSON (data/).');
+    console.log('[MONGO] URI absente — variables séparées MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST ; ou MONGODB_URI / MONGO_URI / DATABASE_URL.');
     return;
   }
+  if (MONGO_URI_SOURCE === 'split') {
+    console.log('[MONGO] URI construite depuis USER + PASSWORD + HOST (encodage géré par le serveur).');
+  }
   try {
-    mongoClient = new MongoClient(MONGODB_URI, {
+    const clientOpts = {
       serverSelectionTimeoutMS: 20_000,
       connectTimeoutMS: 20_000
-    });
+    };
+    if (IS_RENDER) clientOpts.family = 4;
+    mongoClient = new MongoClient(MONGODB_URI, clientOpts);
     await mongoClient.connect();
     const mdb = mongoClient.db(MONGODB_DB_NAME);
     mongoCollection = mdb.collection('app_state');
@@ -170,7 +189,10 @@ async function initMongo() {
     console.error('[MONGO] Connexion impossible:', mongoConnectError);
     if (/EBADNAME|querySrv/i.test(mongoConnectError)) {
       console.error('[MONGO] Cause fréquente : le mot de passe contient @ < > : / ? # sans encodage — l’URI est alors mal découpée (l’hôte doit être *.mongodb.net).');
-      console.error('[MONGO] Corrigez : dans PowerShell, node -e "console.log(encodeURIComponent(\'VOTRE_MOT_DE_PASSE\'))" puis remplacez dans l’URI la partie après le premier : et avant le @ par ce résultat (sans guillemets en trop).');
+      console.error('[MONGO] Sur Render, préférez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (le serveur encode le mot de passe).');
+    }
+    if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(mongoConnectError)) {
+      console.error('[MONGO] Erreur SSL/TLS : souvent identifiants incorrects ou URI mal formée. Utilisez USER + PASSWORD + HOST séparés, ou régénérez le mot de passe Atlas.');
     }
     if (IS_RENDER && MONGODB_URI) {
       console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
@@ -308,6 +330,23 @@ app.get('/api/status', (req, res) => {
   const mongoEnvHints = Object.fromEntries(
     envKeysTried.map((k) => [k, !!normalizeEnvString(process.env[k])])
   );
+  mongoEnvHints.MONGODB_USER = !!normalizeEnvString(process.env.MONGODB_USER || process.env.MONGO_USER);
+  mongoEnvHints.MONGODB_PASSWORD = !!(process.env.MONGODB_PASSWORD ?? process.env.MONGO_PASSWORD);
+  mongoEnvHints.MONGODB_HOST = !!normalizeEnvString(process.env.MONGODB_HOST || process.env.MONGO_HOST);
+
+  let hint = null;
+  if (!MONGODB_URI) {
+    hint = 'Render → Environment : ajoutez MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST (recommandé) ou une MONGODB_URI valide, puis redéployez.';
+  } else if (!mongoCollection && mongoConnectError) {
+    if (/EBADNAME|querySrv/i.test(mongoConnectError)) {
+      hint = 'URI invalide : utilisez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST pour éviter les caractères spéciaux dans une seule chaîne.';
+    } else if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(mongoConnectError)) {
+      hint = 'Erreur SSL : identifiants ou cluster incorrect. Définissez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (mot de passe brut OK). Vérifiez Network Access Atlas (0.0.0.0/0).';
+    } else {
+      hint = 'Vérifiez mot de passe, Network Access Atlas 0.0.0.0/0, et le nom de base.';
+    }
+  }
+
   res.json({
     status: 'online',
     version: 'FlottePPL v20',
@@ -316,18 +355,11 @@ app.get('/api/status', (req, res) => {
     uptime: Math.floor(process.uptime()) + 's',
     mongo: !!mongoCollection,
     render: IS_RENDER,
-    /** true si une des variables d’environnement contient une chaîne non vide (sans afficher la valeur). */
+    mongoUriSource: MONGO_URI_SOURCE,
     mongoUriResolved: !!MONGODB_URI,
     mongoEnvPresent: mongoEnvHints,
-    /** Si URI résolue mais mongo false : message d’erreur Atlas / réseau (sinon null). */
     mongoConnectError: MONGODB_URI && !mongoCollection ? mongoConnectError : null,
-    hint: !MONGODB_URI
-      ? 'Sur Render → Environment : ajoutez MONGODB_URI = chaîne complète Atlas (mongodb+srv://...). Redéployez.'
-      : !mongoCollection && mongoConnectError
-        ? (/EBADNAME|querySrv/i.test(mongoConnectError)
-            ? 'URI invalide : encodez le mot de passe (caractères @ < > etc.) ; l’hôte doit être cluster0.xxx.mongodb.net sans caractère en trop en fin de variable.'
-            : 'Vérifiez mot de passe (souvent à encoder), Network Access Atlas 0.0.0.0/0, et le nom de base dans l’URI.')
-        : null
+    hint
   });
 });
 
