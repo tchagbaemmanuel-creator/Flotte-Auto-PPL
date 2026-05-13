@@ -123,21 +123,30 @@ async function loadUsersFromMongoTable() {
   });
 }
 
-/** Enregistre chaque compte de p5_ac / p5_accounts comme un document dans `users` (_id = id ou username). */
+/** Enregistre chaque compte de p5_ac / p5_accounts comme un document dans `users` (_id = id ou username). Retire les documents orphelins. */
 async function persistUsersToMongoTable(data) {
   if (!mongoUsersCollection || !data) return;
   const list = data.p5_ac || data.p5_accounts;
   if (!Array.isArray(list) || list.length === 0) return;
   const ops = [];
+  const ids = [];
   for (const u of list) {
     const sid = userStableId(u);
     if (!sid) continue;
+    ids.push(sid);
     const doc = { ...u, _id: sid };
     ops.push({ replaceOne: { filter: { _id: sid }, replacement: doc, upsert: true } });
   }
   if (!ops.length) return;
   try {
     await mongoUsersCollection.bulkWrite(ops, { ordered: false });
+    const unique = [...new Set(ids)];
+    if (unique.length) {
+      const del = await mongoUsersCollection.deleteMany({ _id: { $nin: unique } });
+      if (del.deletedCount > 0) {
+        console.log(`[MONGO] Collection users : ${del.deletedCount} compte(s) supprimé(s) (plus dans p5_ac / p5_accounts).`);
+      }
+    }
   } catch (e) {
     console.error('[MONGO] Écriture collection users:', e.message);
   }
