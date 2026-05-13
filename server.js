@@ -17,10 +17,30 @@ const { MongoClient } = require('mongodb');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
+/** Nettoie une URI copiée-collée (espaces, guillemets). */
+function normalizeEnvString(v) {
+  if (v == null) return '';
+  let s = String(v).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+/** Première URI Mongo valide parmi les variables usuelles (Render / autres hébergeurs). */
+function resolveMongoUri() {
+  const keys = ['MONGODB_URI', 'MONGO_URI', 'DATABASE_URL'];
+  for (const k of keys) {
+    const u = normalizeEnvString(process.env[k]);
+    if (u.startsWith('mongodb://') || u.startsWith('mongodb+srv://')) return u;
+  }
+  return '';
+}
+
 // ─── CONFIG ───────────────────────────────────────────────────
 const PORT          = process.env.PORT || 3000;
 const JWT_SECRET    = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
-const MONGODB_URI   = (process.env.MONGODB_URI || '').trim();
+const MONGODB_URI   = resolveMongoUri();
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'flotte_ppl';
 /** Render injecte RENDER=true ; le disque du conteneur n’est pas persistant entre redéploiements. */
 const IS_RENDER     = process.env.RENDER === 'true';
@@ -57,6 +77,8 @@ function loadData() {
 
 let mongoClient     = null;
 let mongoCollection = null;
+/** Dernière erreur de connexion Mongo (message seul, jamais l’URI). */
+let mongoConnectError = null;
 
 async function saveDataMongo(data) {
   if (!mongoCollection) return;
@@ -113,11 +135,12 @@ let DB = IS_RENDER && MONGODB_URI ? {} : loadData();
 
 /** Connexion Atlas et chargement du document principal si présent. */
 async function initMongo() {
+  mongoConnectError = null;
   if (IS_RENDER && !MONGODB_URI) {
     console.warn('[RENDER] MONGODB_URI manquant : les données seront perdues au redémarrage / redéploiement. Ajoutez la variable sur Render (Atlas → Connect → Drivers).');
   }
   if (!MONGODB_URI) {
-    console.log('[MONGO] MONGODB_URI absent — persistance uniquement via fichiers JSON (data/).');
+    console.log('[MONGO] URI Mongo absente — essayez la clé exacte MONGODB_URI, ou MONGO_URI / DATABASE_URL (chaîne mongodb…). Persistance : fichiers JSON (data/).');
     return;
   }
   try {
@@ -141,8 +164,10 @@ async function initMongo() {
     } else {
       console.log(`[MONGO] Connecté — base vide (prêt à enregistrer dans ${MONGODB_DB_NAME}.app_state).`);
     }
+    mongoConnectError = null;
   } catch (e) {
-    console.error('[MONGO] Connexion impossible:', e.message);
+    mongoConnectError = e.message || String(e);
+    console.error('[MONGO] Connexion impossible:', mongoConnectError);
     if (IS_RENDER && MONGODB_URI) {
       console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
     }
@@ -275,6 +300,10 @@ app.post('/api/data/:key', (req, res) => {
 // ── STATUT serveur ──
 app.get('/api/status', (req, res) => {
   const connected = [...io.sockets.sockets.values()].length;
+  const envKeysTried = ['MONGODB_URI', 'MONGO_URI', 'DATABASE_URL'];
+  const mongoEnvHints = Object.fromEntries(
+    envKeysTried.map((k) => [k, !!normalizeEnvString(process.env[k])])
+  );
   res.json({
     status: 'online',
     version: 'FlottePPL v20',
@@ -282,7 +311,17 @@ app.get('/api/status', (req, res) => {
     dataKeys: Object.keys(DB).length,
     uptime: Math.floor(process.uptime()) + 's',
     mongo: !!mongoCollection,
-    render: IS_RENDER
+    render: IS_RENDER,
+    /** true si une des variables d’environnement contient une chaîne non vide (sans afficher la valeur). */
+    mongoUriResolved: !!MONGODB_URI,
+    mongoEnvPresent: mongoEnvHints,
+    /** Si URI résolue mais mongo false : message d’erreur Atlas / réseau (sinon null). */
+    mongoConnectError: MONGODB_URI && !mongoCollection ? mongoConnectError : null,
+    hint: !MONGODB_URI
+      ? 'Sur Render → Environment : ajoutez MONGODB_URI = chaîne complète Atlas (mongodb+srv://...). Redéployez.'
+      : !mongoCollection && mongoConnectError
+        ? 'Vérifiez mot de passe (souvent à encoder), Network Access Atlas 0.0.0.0/0, et le nom de base dans l’URI.'
+        : null
   });
 });
 
