@@ -168,6 +168,10 @@ async function initMongo() {
   } catch (e) {
     mongoConnectError = e.message || String(e);
     console.error('[MONGO] Connexion impossible:', mongoConnectError);
+    if (/EBADNAME|querySrv/i.test(mongoConnectError)) {
+      console.error('[MONGO] Cause fréquente : le mot de passe contient @ < > : / ? # sans encodage — l’URI est alors mal découpée (l’hôte doit être *.mongodb.net).');
+      console.error('[MONGO] Corrigez : dans PowerShell, node -e "console.log(encodeURIComponent(\'VOTRE_MOT_DE_PASSE\'))" puis remplacez dans l’URI la partie après le premier : et avant le @ par ce résultat (sans guillemets en trop).');
+    }
     if (IS_RENDER && MONGODB_URI) {
       console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
     }
@@ -320,7 +324,9 @@ app.get('/api/status', (req, res) => {
     hint: !MONGODB_URI
       ? 'Sur Render → Environment : ajoutez MONGODB_URI = chaîne complète Atlas (mongodb+srv://...). Redéployez.'
       : !mongoCollection && mongoConnectError
-        ? 'Vérifiez mot de passe (souvent à encoder), Network Access Atlas 0.0.0.0/0, et le nom de base dans l’URI.'
+        ? (/EBADNAME|querySrv/i.test(mongoConnectError)
+            ? 'URI invalide : encodez le mot de passe (caractères @ < > etc.) ; l’hôte doit être cluster0.xxx.mongodb.net sans caractère en trop en fin de variable.'
+            : 'Vérifiez mot de passe (souvent à encoder), Network Access Atlas 0.0.0.0/0, et le nom de base dans l’URI.')
         : null
   });
 });
