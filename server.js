@@ -57,6 +57,19 @@ function saveData(data) {
   } catch(e) { console.error('[DATA] Erreur écriture:', e.message); }
 }
 
+/** Fusionne les demandes d'inscription (évite d'écraser la file serveur avec le localStorage incomplet du demandeur). */
+function mergeInscriptionPending(prev, incoming) {
+  if (!Array.isArray(incoming)) return incoming;
+  const map = new Map();
+  for (const p of Array.isArray(prev) ? prev : []) {
+    if (p && p.id != null) map.set(String(p.id), p);
+  }
+  for (const p of incoming) {
+    if (p && p.id != null) map.set(String(p.id), p);
+  }
+  return [...map.values()];
+}
+
 function loadUsers() {
   try {
     if (fs.existsSync(USERS_FILE)) {
@@ -169,9 +182,14 @@ app.post('/api/data/:key', (req, res) => {
   const user  = req.body?.user || 'HTTP';
   if (!key || key === '_ppl_jwt') return res.status(400).json({ error: 'Clé invalide' });
 
-  DB[key] = value;
-  // Diffuser aux clients connectés via Socket.IO
-  io.emit('data-update', { key, value, changedBy: user });
+  if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
+    DB[key] = mergeInscriptionPending(DB[key], value);
+    console.log(`[INSCRIPTION] Mise à jour file d'attente (${DB[key].length} entrée(s)) par ${user}`);
+  } else {
+    DB[key] = value;
+  }
+
+  io.emit('data-update', { key, value: DB[key], changedBy: user });
   res.json({ ok: true });
 });
 
@@ -211,9 +229,13 @@ io.on('connection', (socket) => {
   socket.on('set-key', ({ key, value, user }) => {
     if (!key || key === '_ppl_jwt') return;
     const who = user || userName;
-    DB[key] = value;
-    // Diffuser à tous les AUTRES clients
-    socket.broadcast.emit('data-update', { key, value, changedBy: who });
+    if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
+      DB[key] = mergeInscriptionPending(DB[key], value);
+      io.emit('data-update', { key, value: DB[key], changedBy: who });
+    } else {
+      DB[key] = value;
+      socket.broadcast.emit('data-update', { key, value, changedBy: who });
+    }
     // Sauvegarde différée (évite les écritures trop fréquentes)
     clearTimeout(socket._saveTimer);
     socket._saveTimer = setTimeout(() => saveData(DB), 2000);
