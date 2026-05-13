@@ -13,10 +13,17 @@ const jwt        = require('jsonwebtoken');
 const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
+const { MongoClient } = require('mongodb');
+
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // ─── CONFIG ───────────────────────────────────────────────────
-const PORT       = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
+const PORT          = process.env.PORT || 3000;
+const JWT_SECRET    = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
+const MONGODB_URI   = (process.env.MONGODB_URI || '').trim();
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'flotte_ppl';
+/** Render injecte RENDER=true ; le disque du conteneur n’est pas persistant entre redéploiements. */
+const IS_RENDER     = process.env.RENDER === 'true';
 const DATA_FILE  = path.join(__dirname, 'data', 'flotte_data.json');
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
 const HTML_FILE  = path.join(__dirname, 'FlottePPL_v30.html');
@@ -48,13 +55,28 @@ function loadData() {
   return {};
 }
 
+let mongoClient     = null;
+let mongoCollection = null;
+
+async function saveDataMongo(data) {
+  if (!mongoCollection) return;
+  await mongoCollection.replaceOne(
+    { _id: 'main' },
+    { _id: 'main', data, updatedAt: new Date() },
+    { upsert: true }
+  );
+}
+
 function saveData(data) {
-  try {
-    // Sauvegarde atomique (fichier temporaire puis renommage)
-    const tmp = DATA_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmp, DATA_FILE);
-  } catch(e) { console.error('[DATA] Erreur écriture:', e.message); }
+  const persistFile = !(mongoCollection && IS_RENDER);
+  if (persistFile) {
+    try {
+      const tmp = DATA_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+      fs.renameSync(tmp, DATA_FILE);
+    } catch (e) { console.error('[DATA] Erreur écriture:', e.message); }
+  }
+  saveDataMongo(data).catch((e) => console.error('[MONGO] Erreur écriture:', e.message));
 }
 
 /** Fusionne les demandes d'inscription (évite d'écraser la file serveur avec le localStorage incomplet du demandeur). */
@@ -86,15 +108,72 @@ function loadUsers() {
   return defaults;
 }
 
-// Données en mémoire (chargées au démarrage)
-let DB = loadData();
+// Sur Render avec Atlas : ne pas partir d’un JSON éphémère sur disque ; Atlas est la source de vérité.
+let DB = IS_RENDER && MONGODB_URI ? {} : loadData();
+
+/** Connexion Atlas et chargement du document principal si présent. */
+async function initMongo() {
+  if (IS_RENDER && !MONGODB_URI) {
+    console.warn('[RENDER] MONGODB_URI manquant : les données seront perdues au redémarrage / redéploiement. Ajoutez la variable sur Render (Atlas → Connect → Drivers).');
+  }
+  if (!MONGODB_URI) {
+    console.log('[MONGO] MONGODB_URI absent — persistance uniquement via fichiers JSON (data/).');
+    return;
+  }
+  try {
+    mongoClient = new MongoClient(MONGODB_URI, {
+      serverSelectionTimeoutMS: 20_000,
+      connectTimeoutMS: 20_000
+    });
+    await mongoClient.connect();
+    const mdb = mongoClient.db(MONGODB_DB_NAME);
+    mongoCollection = mdb.collection('app_state');
+    const doc = await mongoCollection.findOne({ _id: 'main' });
+    const fromMongo = doc && doc.data && typeof doc.data === 'object' ? doc.data : null;
+    const keysMongo = fromMongo ? Object.keys(fromMongo).length : 0;
+    const keysFile  = Object.keys(DB).length;
+    if (keysMongo > 0) {
+      DB = fromMongo;
+      console.log(`[MONGO] Connecté — ${keysMongo} clé(s) chargée(s) depuis Atlas (${MONGODB_DB_NAME}.app_state).`);
+    } else if (keysFile > 0) {
+      await saveDataMongo(DB);
+      console.log(`[MONGO] Connecté — données locales copiées vers Atlas (${keysFile} clé(s)).`);
+    } else {
+      console.log(`[MONGO] Connecté — base vide (prêt à enregistrer dans ${MONGODB_DB_NAME}.app_state).`);
+    }
+  } catch (e) {
+    console.error('[MONGO] Connexion impossible:', e.message);
+    if (IS_RENDER && MONGODB_URI) {
+      console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
+    }
+    mongoCollection = null;
+    if (mongoClient) {
+      try { await mongoClient.close(); } catch (_) {}
+    }
+    mongoClient = null;
+  }
+}
 
 // Auto-sauvegarde toutes les 30 secondes
 setInterval(() => saveData(DB), 30000);
 
 // Sauvegarde à la fermeture
-process.on('SIGINT',  () => { saveData(DB); console.log('\n✅ Données sauvegardées. Arrêt.'); process.exit(0); });
-process.on('SIGTERM', () => { saveData(DB); process.exit(0); });
+async function shutdown(signal) {
+  try {
+    saveData(DB);
+    if (mongoCollection) await saveDataMongo(DB);
+  } catch (e) {
+    console.error('[SHUTDOWN]', e.message);
+  }
+  if (mongoClient) {
+    try { await mongoClient.close(); } catch (_) {}
+  }
+  if (signal) console.log('\n✅ Données sauvegardées. Arrêt.');
+  process.exit(0);
+}
+
+process.on('SIGINT',  () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 
 // ─── UTILITAIRES ──────────────────────────────────────────────
 function verifyJWT(token) {
@@ -201,7 +280,9 @@ app.get('/api/status', (req, res) => {
     version: 'FlottePPL v20',
     connectedUsers: connected,
     dataKeys: Object.keys(DB).length,
-    uptime: Math.floor(process.uptime()) + 's'
+    uptime: Math.floor(process.uptime()) + 's',
+    mongo: !!mongoCollection,
+    render: IS_RENDER
   });
 });
 
@@ -264,29 +345,25 @@ io.on('connection', (socket) => {
 });
 
 // ─── DÉMARRAGE ────────────────────────────────────────────────
-server.listen(PORT, '0.0.0.0', () => {
-  const { networkInterfaces } = require('os');
-  const nets = networkInterfaces();
-  let localIP = 'localhost';
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) { localIP = net.address; break; }
+(async () => {
+  await initMongo();
+  server.listen(PORT, '0.0.0.0', () => {
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    let localIP = 'localhost';
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) { localIP = net.address; break; }
+      }
+      if (localIP !== 'localhost') break;
     }
-    if (localIP !== 'localhost') break;
-  }
-
-  console.log('\n╔══════════════════════════════════════════════════════╗');
-  console.log('║          🚗  FLOTTE PPL — SERVEUR DÉMARRÉ           ║');
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log(`║  Local  :  http://localhost:${PORT}                     ║`);
-  console.log(`║  Réseau :  http://${localIP}:${PORT}                 ║`);
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log('║  Comptes par défaut :                                ║');
-  console.log('║    admin / ppl2024     (Administrateur)              ║');
-  console.log('║    logistique / flotte123  (Gestionnaire)            ║');
-  console.log('║    operateur / op2024  (Opérateur)                   ║');
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log('║  Données sauvegardées dans : data/flotte_data.json   ║');
-  console.log('║  Ctrl+C pour arrêter proprement                      ║');
-  console.log('╚══════════════════════════════════════════════════════╝\n');
-});
+    const persist = mongoCollection
+      ? 'MongoDB Atlas (connecté)'
+      : MONGODB_URI
+        ? 'MongoDB : échec de connexion (voir messages [MONGO] ci-dessus)'
+        : 'fichiers JSON uniquement (data/)';
+    console.log('[BOOT] Flotte PPL — build avec Socket.IO + persistance ' + (MONGODB_URI ? 'Mongo' : 'JSON'));
+    console.log(`[BOOT] Mode données : ${persist}${IS_RENDER ? ' | Render' : ''}`);
+    console.log(`[HTTP] Flotte PPL — http://${localIP}:${PORT}/`);
+  });
+})();

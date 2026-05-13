@@ -21,7 +21,7 @@ GitHub Pages ne supporte que les sites statiques.
 
 Dans le dépôt vide, cliquer **"uploading an existing file"** et déposer :
 - `server.js`
-- `FlottePPL_v20.html`
+- `FlottePPL_v30.html`
 - `package.json`
 - `render.yaml`
 - `README.md`
@@ -43,10 +43,12 @@ Commit → **"Commit changes"**
    - **Build Command :** `npm install`
    - **Start Command :** `node server.js`
    - **Plan :** Free
-5. Section **"Environment Variables"** → ajouter :
-   - Key : `JWT_SECRET`
-   - Value : (une phrase longue et secrète, ex: `MonSecret_FlottePPL_2024_Abidjan`)
-6. Cliquer **"Create Web Service"**
+5. Section **"Environment Variables"** :
+   - `JWT_SECRET` : une phrase longue et secrète (Render peut aussi en générer une via `render.yaml`).
+   - **`MONGODB_URI`** (obligatoire pour garder les données) : copier l’URI depuis **Atlas → Connect → Drivers** (Node.js). Remplacer `<password>` par le mot de passe ; s’il contient `@`, `/`, etc., encoder le mot de passe seul (PowerShell : `node -e "console.log(encodeURIComponent('votre_mot_de_passe'))"`). L’URI doit contenir le nom de base, par ex. `...mongodb.net/flotte_ppl?retryWrites=true&w=majority`.
+   - **`MONGODB_DB_NAME`** (optionnel) : `flotte_ppl` si tu veux forcer le nom de base (sinon celui dans l’URI suffit).
+6. Dans **MongoDB Atlas → Network Access** : autoriser **`0.0.0.0/0`** (ou les IP de Render si tu préfères restreindre), sinon la connexion depuis Render échoue.
+7. Cliquer **"Create Web Service"**
 
 ---
 
@@ -76,6 +78,5 @@ La première visite après une pause prend ~30 secondes pour redémarrer.
 
 - **Logs en temps réel** : dans Render → ton service → onglet "Logs"
 - **Erreur 503** : le service redémarre, attendre 30s
-- **Données perdues** : sur le plan gratuit, les données sont en mémoire.
-  Pour les persister, activer un disque dans Render (plan payant) ou
-  migrer vers une base de données (MongoDB Atlas gratuit).
+- **Données / MongoDB** : sans `MONGODB_URI`, le disque Render est **éphémère** (perte au redéploiement). Avec `MONGODB_URI`, le serveur lit/écrit la collection **`app_state`** (document `_id: "main"`). Vérifier les logs `[MONGO] Connecté` ou les erreurs réseau / mot de passe.
+- **Santé** : `GET https://ton-service.onrender.com/api/status` affiche `"mongo": true` si Atlas est connecté.
