@@ -4442,7 +4442,15 @@ function connectSocket(){
         }
       });
       try { renderAll(); } catch(e) {}
-      showT('✅ Données synchronisées depuis le serveur', 's');
+      if (typeof CU !== 'undefined' && CU) {
+        showT('✅ Données synchronisées depuis le serveur', 's');
+      } else {
+        try { initChips(); } catch (e) {}
+        var _lw0 = document.getElementById('login-wrap');
+        if (_lw0 && _lw0.style.display !== 'none') {
+          showT('✅ Comptes synchronisés — vous pouvez vous connecter', 's');
+        }
+      }
     });
 
     // Mise à jour d'une clé par un autre utilisateur
@@ -4450,6 +4458,10 @@ function connectSocket(){
       if (!key || key === '_ppl_jwt') return;
       localStorage.setItem(key, JSON.stringify(value));
       try { renderAll(); } catch(e) {}
+      if ((key === 'p5_ac' || key === 'p5_accounts') && !(typeof CU !== 'undefined' && CU)) {
+        try { initChips(); } catch (e) {}
+        showT('🔄 Compte(s) mis à jour — vous pouvez vous connecter', 'gold');
+      }
       if (changedBy && CU && changedBy !== CU.name) {
         showT('🔄 ' + changedBy + ' a mis à jour les données', 'gold');
       }
@@ -4515,8 +4527,10 @@ async function pushToServer(key, value) {
 }
 
 // ─── SYNC DEPUIS SERVEUR ──────────────────────────────
-async function syncFromServer() {
+/** opts.quiet : pas de toast (ex. rafraîchissement en arrière-plan sur l’écran de connexion). */
+async function syncFromServer(opts) {
   try {
+    const quiet = opts && opts.quiet;
     const res = await fetch(SERVER_URL + '/api/data', {
       signal: AbortSignal.timeout(8000)
     });
@@ -4526,8 +4540,52 @@ async function syncFromServer() {
       if (k && !k.startsWith('_ppl_jwt')) localStorage.setItem(k, JSON.stringify(v));
     });
     try { renderAll(); } catch(e) {}
-    showT('✅ Données synchronisées', 's');
+    if (!quiet) showT('✅ Données synchronisées', 's');
   } catch(e) { /* hors ligne */ }
+}
+
+/** Sur l’écran de connexion : socket + sync HTTP pour recevoir les comptes approuvés sans qu’un autre client soit connecté. */
+function startPreLoginCloudSync() {
+  var proto = window.location.protocol;
+  var port  = window.location.port;
+  var host  = window.location.hostname;
+  var isFileProtocol = (proto === 'file:');
+  var isLocalNoServer = (host === 'localhost' || host === '127.0.0.1') &&
+                        (port !== '3000' && port !== '3443');
+  var hasServer = !isFileProtocol && !isLocalNoServer;
+  if (!hasServer) return;
+  if (typeof syncFromServer === 'function') {
+    syncFromServer({ quiet: true }).then(function () {
+      try { initChips(); } catch (e) {}
+    });
+  }
+  if (typeof initNetwork === 'function') initNetwork();
+  if (window._preLoginSyncInterval) {
+    clearInterval(window._preLoginSyncInterval);
+    window._preLoginSyncInterval = null;
+  }
+  window._preLoginSyncInterval = setInterval(function () {
+    var lw = document.getElementById('login-wrap');
+    if (!lw || lw.style.display === 'none') {
+      if (window._preLoginSyncInterval) {
+        clearInterval(window._preLoginSyncInterval);
+        window._preLoginSyncInterval = null;
+      }
+      return;
+    }
+    if (typeof CU !== 'undefined' && CU) {
+      if (window._preLoginSyncInterval) {
+        clearInterval(window._preLoginSyncInterval);
+        window._preLoginSyncInterval = null;
+      }
+      return;
+    }
+    if (typeof syncFromServer === 'function') {
+      syncFromServer({ quiet: true }).then(function () {
+        try { initChips(); } catch (e) {}
+      });
+    }
+  }, 10000);
 }
 
 // ─── STOCKAGE (localStorage + sync réseau) ───
@@ -4804,6 +4862,10 @@ function _afterLogin(acc, loginBtn){
 
   // Lancer la synchronisation réseau
   setTimeout(function(){
+    if (window._preLoginSyncInterval) {
+      clearInterval(window._preLoginSyncInterval);
+      window._preLoginSyncInterval = null;
+    }
     try{ _ensureNewPages(); } catch(e){} // S'assurer que les pages fusionnées existent
     try{
       if(typeof initNetwork==='function') initNetwork();
@@ -4914,6 +4976,7 @@ function doLogout(){
   document.getElementById("lu").value="";document.getElementById("lp").value="";
   document.getElementById("login-err").style.display="none";
   initChips();
+  if (typeof startPreLoginCloudSync === 'function') startPreLoginCloudSync();
   // Réinitialiser TOUS les items sidebar (fix rôle demandeur/approbateur)
   document.querySelectorAll('.sbi[data-p]').forEach(function(el){ el.style.display=''; });
   document.querySelectorAll('.sbg').forEach(function(el){ el.style.display=''; });
@@ -12472,6 +12535,7 @@ if(!load(K_MOTO_PAYMENTS))  save(K_MOTO_PAYMENTS,[]);
 
 // ═══ INIT ═══
 initData();try{initPrest();}catch(e){} try{initLP();}catch(e){} initChips();startAutoSave();checkAutoSave();updateBackupStats();
+if (typeof startPreLoginCloudSync === 'function') startPreLoginCloudSync();
 setTimeout(function(){try{_initVehicleButtons();}catch(e){}},100);
 // Storage warning check at startup
 setTimeout(function(){
