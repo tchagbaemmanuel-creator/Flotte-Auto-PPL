@@ -4452,7 +4452,7 @@ function connectSocket(){
       if (!data || typeof data !== 'object') return;
       Object.entries(data).forEach(([k, v]) => {
         if (k && v !== undefined && !k.startsWith('_ppl_jwt')) {
-          localStorage.setItem(k, JSON.stringify(v));
+          applyMergedKeyToStorage(k, v);
         }
       });
       try { renderAll(); } catch(e) {}
@@ -4470,10 +4470,11 @@ function connectSocket(){
     // Mise à jour d'une clé par un autre utilisateur
     _socket.on('data-update', ({ key, value, changedBy }) => {
       if (!key || key === '_ppl_jwt') return;
-      var val = value;
-      if (key === 'p5_ac' || key === 'p5_accounts') val = mergeAccountsFromServer(value);
-      localStorage.setItem(key, JSON.stringify(val));
+      applyMergedKeyToStorage(key, value);
       try { renderAll(); } catch(e) {}
+      if (key === 'p5_demandes_course' && typeof renderDemandesPage === 'function') {
+        try { renderDemandesPage(); } catch(e) {}
+      }
       if ((key === 'p5_ac' || key === 'p5_accounts') && !(typeof CU !== 'undefined' && CU)) {
         try { initChips(); } catch (e) {}
         showT('🔄 Compte(s) mis à jour — vous pouvez vous connecter', 'gold');
@@ -4560,6 +4561,39 @@ function mergeAccountsFromServer(incoming) {
   });
 }
 
+/** Fusionne les demandes de course — conserve l'historique même si un autre agent synchronise. */
+function mergeDemandesCourse(prev, incoming) {
+  if (!Array.isArray(incoming)) return incoming;
+  var map = {};
+  (Array.isArray(prev) ? prev : []).forEach(function (d) {
+    if (d && d.id != null) map[String(d.id)] = d;
+  });
+  incoming.forEach(function (d) {
+    if (!d || d.id == null) return;
+    var id = String(d.id);
+    var ex = map[id];
+    if (!ex) { map[id] = d; return; }
+    var exU = String(ex.updatedAt || ex.createdAt || '');
+    var dU = String(d.updatedAt || d.createdAt || '');
+    map[id] = dU >= exU ? Object.assign({}, ex, d) : ex;
+  });
+  return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) {
+    return String(b.createdAt || b.dateDepart || '').localeCompare(String(a.createdAt || a.dateDepart || ''));
+  });
+}
+
+function applyMergedKeyToStorage(key, value) {
+  var val = value;
+  if (key === 'p5_ac' || key === 'p5_accounts') val = mergeAccountsFromServer(value);
+  else if (key === 'p5_demandes_course' && Array.isArray(value)) {
+    var prev = [];
+    try { prev = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { prev = []; }
+    val = mergeDemandesCourse(prev, value);
+  }
+  localStorage.setItem(key, JSON.stringify(val));
+  return val;
+}
+
 async function syncFromServer(opts) {
   try {
     const quiet = opts && opts.quiet;
@@ -4570,9 +4604,7 @@ async function syncFromServer(opts) {
     const data = await res.json();
     Object.entries(data).forEach(([k, v]) => {
       if (!k || k.startsWith('_ppl_jwt')) return;
-      var val = v;
-      if (k === 'p5_ac' || k === 'p5_accounts') val = mergeAccountsFromServer(v);
-      localStorage.setItem(k, JSON.stringify(val));
+      applyMergedKeyToStorage(k, v);
     });
     try { renderAll(); } catch(e) {}
     if (!quiet) showT('✅ Données synchronisées', 's');
@@ -22636,10 +22668,12 @@ var K_APPROBATEURS = 'p5_approbateurs_course'; // liste des approbateurs par ser
 var gDemandes = function(){ try{ return JSON.parse(localStorage.getItem(K_DEMANDES))||[];
 window.gDemandes = gDemandes; }catch(e){ return []; } };
 function saveDemandes(arr){
-  localStorage.setItem(K_DEMANDES, JSON.stringify(arr));
+  var merged = mergeDemandesCourse(gDemandes(), arr);
+  localStorage.setItem(K_DEMANDES, JSON.stringify(merged));
   if(typeof pushToServer==='function' && typeof _socket!=='undefined' && _socket && _socket.connected){
-    try{ pushToServer(K_DEMANDES, arr); }catch(e){}
+    try{ pushToServer(K_DEMANDES, merged); }catch(e){}
   }
+  return merged;
 }
 window.saveDemandes = saveDemandes;
 
@@ -22935,6 +22969,7 @@ window.saveDemande = function(){
     ref: ref,
     demandeurId: cu ? cu.id : 0,
     demandeurNom: nom,
+    demandeurEmail: cu ? (cu.email || '') : '',
     service: service,
     dateDepart: dateDepart,
     heureDepart: heureDepart,
@@ -22963,6 +22998,36 @@ window.saveDemande = function(){
   document.getElementById('mo-nouvelle-demande').classList.remove('open');
   renderDemandesPage();
 };
+
+function _pplTabHistorique(liste) {
+  var SL={en_attente:'En attente',approuve:'Approuvée',rejete:'Rejetée',en_cours:'En cours',termine:'Terminée',annule:'Annulée'};
+  var SC={en_attente:'#F59E0B',approuve:'#059669',rejete:'#DC2626',en_cours:'#3B82F6',termine:'#6B7280',annule:'#9CA3AF'};
+  var byDay = {};
+  liste.slice().sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); }).forEach(function(d){
+    var day = (d.createdAt || d.dateDepart || '').split('T')[0] || 'Sans date';
+    if(!byDay[day]) byDay[day] = [];
+    byDay[day].push(d);
+  });
+  var days = Object.keys(byDay).sort(function(a,b){ return b.localeCompare(a); });
+  if(!days.length) return '<div class="card"><div style="padding:24px;text-align:center;color:var(--t3)">Aucun historique</div></div>';
+  var fD=function(s){if(!s)return '—';try{return new Date(s).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}catch(e){return s;}};
+  return days.map(function(day){
+    var items = byDay[day];
+    var rows = items.map(function(d){
+      return '<tr style="cursor:pointer" onclick="voirDetailDemande('+d.id+')">'+
+        '<td style="font-family:monospace;font-size:10px;font-weight:700;color:var(--maroon)">'+d.ref+'</td>'+
+        '<td style="font-size:11px">'+d.demandeurNom+'</td>'+
+        '<td style="font-size:10px">'+fD(d.createdAt)+'</td>'+
+        '<td style="font-size:11px">'+ (d.destination||'—') +'</td>'+
+        '<td><span style="color:'+(SC[d.statut]||'#666')+';font-size:10px;font-weight:700">'+(SL[d.statut]||d.statut)+'</span></td>'+
+      '</tr>';
+    }).join('');
+    return '<div class="card" style="margin-bottom:14px">'+
+      '<div class="ch"><div class="ct"><span class="dot"></span>📅 '+fD(day)+' <span style="font-size:10px;color:var(--t3);font-weight:400">('+items.length+' demande'+(items.length>1?'s':'')+')</span></div></div>'+
+      '<div class="tw"><table><thead><tr><th>Réf.</th><th>Demandeur</th><th>Créée le</th><th>Destination</th><th>Statut</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '</div>';
+  }).join('');
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // ACTIONS : APPROUVER / REJETER / AFFECTER / ANNULER
@@ -26696,12 +26761,15 @@ window.renderDemandesPage = function(){
   h+=mkT('toutes','\uD83D\uDCCB Toutes',vis.length,null);
   h+=mkT('attente','\u23F3 En attente',att.length,'#F59E0B');
   h+=mkT('urgentes','\uD83D\uDEA8 Urgentes',urg.length,'#DC2626');
+  h+=mkT('historique','\uD83D\uDCC5 Historique',vis.length,'#1D4ED8');
   if(isA||isP) h+=mkT('config','\u2699\uFE0F Configuration',null,'var(--gold)');
   h+='</div>';
 
   // Contenu par onglet
   if(tab==='config'&&(isA||isP)){
     h+=(typeof _tabCfg==='function')?_tabCfg(cfg,cu,isA,isP):'<p>Configuration indisponible</p>';
+  } else if(tab==='historique'){
+    h+=_pplTabHistorique(vis);
   } else if(tab==='urgentes'){
     h+=(typeof _tabUrg==='function')?_tabUrg(urg,cu,isA,isP,isD,cfg):'<p>Urgentes indisponible</p>';
   } else {

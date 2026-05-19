@@ -15,6 +15,9 @@ const path       = require('path');
 const cors       = require('cors');
 const compression = require('compression');
 const db         = require('./lib/database');
+const { mergeDemandesCourse, mergeInscriptionPending } = require('./lib/merge');
+const notifications = require('./lib/notifications');
+const mailer     = require('./lib/mailer');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -126,17 +129,25 @@ function persistKeyToMongo(key) {
   }
 }
 
-/** Fusionne les demandes d'inscription (évite d'écraser la file serveur avec le localStorage incomplet du demandeur). */
-function mergeInscriptionPending(prev, incoming) {
-  if (!Array.isArray(incoming)) return incoming;
-  const map = new Map();
-  for (const p of Array.isArray(prev) ? prev : []) {
-    if (p && p.id != null) map.set(String(p.id), p);
+/** Applique une mise à jour de clé (fusion + notifications + Mongo). */
+async function applyKeyUpdate(key, value, user) {
+  const prev = DB[key];
+  let next = value;
+
+  if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
+    next = mergeInscriptionPending(prev, value);
+    notifications.onInscriptionsUpdated(prev, next, DB).catch((e) => console.error('[NOTIF]', e.message));
+    console.log(`[INSCRIPTION] Mise à jour file d'attente (${next.length} entrée(s)) par ${user}`);
+  } else if (key === 'p5_demandes_course' && Array.isArray(value)) {
+    next = mergeDemandesCourse(prev, value);
+    notifications.onDemandesUpdated(prev, next, DB).catch((e) => console.error('[NOTIF]', e.message));
+  } else {
+    next = value;
   }
-  for (const p of incoming) {
-    if (p && p.id != null) map.set(String(p.id), p);
-  }
-  return [...map.values()];
+
+  DB[key] = next;
+  markMongoDirty(key);
+  return next;
 }
 
 function loadUsers() {
@@ -314,20 +325,14 @@ app.get('/api/data/:key', (req, res) => {
 });
 
 // ── DATA : Écrire une clé (fallback HTTP sans socket) ──
-app.post('/api/data/:key', (req, res) => {
+app.post('/api/data/:key', async (req, res) => {
   const key   = decodeURIComponent(req.params.key);
   const value = req.body?.value;
   const user  = req.body?.user || 'HTTP';
   if (!key || key === '_ppl_jwt') return res.status(400).json({ error: 'Clé invalide' });
 
-  if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
-    DB[key] = mergeInscriptionPending(DB[key], value);
-    console.log(`[INSCRIPTION] Mise à jour file d'attente (${DB[key].length} entrée(s)) par ${user}`);
-  } else {
-    DB[key] = value;
-  }
-
-  io.emit('data-update', { key, value: DB[key], changedBy: user });
+  const stored = await applyKeyUpdate(key, value, user);
+  io.emit('data-update', { key, value: stored, changedBy: user });
   persistKeyToMongo(key);
   res.json({ ok: true });
 });
@@ -396,6 +401,7 @@ app.get('/api/status', async (req, res) => {
     mongoUriResolved: !!MONGODB_URI,
     mongoEnvPresent: mongoEnvHints,
     mongoConnectError: MONGODB_URI && !isMongoConnected() ? mErr : null,
+    mail: mailer.isConfigured(),
     hint
   });
 });
@@ -421,17 +427,11 @@ io.on('connection', (socket) => {
   io.emit('users-online', [...onlineUsers.values()]);
 
   // ── Mise à jour d'une clé ──
-  socket.on('set-key', ({ key, value, user }) => {
+  socket.on('set-key', async ({ key, value, user }) => {
     if (!key || key === '_ppl_jwt') return;
     const who = user || userName;
-    if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
-      DB[key] = mergeInscriptionPending(DB[key], value);
-      io.emit('data-update', { key, value: DB[key], changedBy: who });
-    } else {
-      DB[key] = value;
-      socket.broadcast.emit('data-update', { key, value, changedBy: who });
-    }
-    // Sauvegarde différée (évite les écritures trop fréquentes)
+    const stored = await applyKeyUpdate(key, value, who);
+    io.emit('data-update', { key, value: stored, changedBy: who });
     clearTimeout(socket._saveTimer);
     socket._saveTimer = setTimeout(() => {
       if (!(isMongoConnected() && IS_RENDER)) {
@@ -472,6 +472,7 @@ io.on('connection', (socket) => {
 
 // ─── DÉMARRAGE ────────────────────────────────────────────────
 (async () => {
+  mailer.init();
   await initMongo();
   server.listen(PORT, '0.0.0.0', () => {
     const { networkInterfaces } = require('os');
