@@ -34,3 +34,5 @@ services:
         sync: false
       - key: APP_URL
         sync: false
+      - key: MAIL_ADMIN_NOTIFY
+        sync: false

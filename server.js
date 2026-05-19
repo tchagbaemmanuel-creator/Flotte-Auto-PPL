@@ -407,7 +407,8 @@ app.get('/api/status', async (req, res) => {
       SMTP_USER: !!normalizeEnvString(process.env.SMTP_USER),
       SMTP_PASS: !!(process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD),
       MAIL_FROM: !!normalizeEnvString(process.env.MAIL_FROM),
-      APP_URL: !!normalizeEnvString(process.env.APP_URL || process.env.RENDER_EXTERNAL_URL)
+      APP_URL: !!normalizeEnvString(process.env.APP_URL || process.env.RENDER_EXTERNAL_URL),
+      MAIL_ADMIN_NOTIFY: !!normalizeEnvString(process.env.MAIL_ADMIN_NOTIFY)
     },
     hint
   });

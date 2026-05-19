@@ -4523,6 +4523,29 @@ function updateOnlineUsers(users) {
 }
 
 // ─── PUSH VERS SERVEUR ────────────────────────────────
+/** Inscription publique : POST HTTP garanti (déclenche e-mail admin côté serveur). */
+async function pushInscriptionPendingToServer(pending) {
+  var key = 'p5_inscriptions_pending';
+  var user = 'Inscription publique';
+  if (_socket && _socket.connected) {
+    _socket.emit('set-key', { key: key, value: pending, user: user });
+  }
+  try {
+    var res = await fetch(SERVER_URL + '/api/data/' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: pending, user: user }),
+      signal: AbortSignal.timeout(20000)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return true;
+  } catch (e) {
+    console.error('[INSCRIPTION] Sync serveur:', e);
+    _syncQueue.push({ key: key, value: pending });
+    return false;
+  }
+}
+
 async function pushToServer(key, value) {
   if (!key || key === '_ppl_jwt') return;
   // Préférer Socket.IO si connecté (fonctionne avec ou sans JWT)
@@ -23656,7 +23679,7 @@ window.injectInscriptionPublicPage = injectInscriptionPublicPage;
 // ══════════════════════════════════════════════════════════════════════
 // 3. SOUMISSION DU FORMULAIRE D'INSCRIPTION
 // ══════════════════════════════════════════════════════════════════════
-window.soumettreInscription = function(){
+window.soumettreInscription = async function(){
   var nom      = (document.getElementById('ins-nom')||{}).value||'';
   var prenom   = (document.getElementById('ins-prenom')||{}).value||'';
   var service  = (document.getElementById('ins-service')||{}).value||'';
@@ -23715,7 +23738,17 @@ window.soumettreInscription = function(){
     pending.push(req);
     localStorage.setItem('p5_inscriptions_pending',JSON.stringify(pending));
 
-    if(typeof pushToServer==='function'){ try{ pushToServer('p5_inscriptions_pending', pending); }catch(e2){} }
+    var synced = false;
+    if (typeof pushInscriptionPendingToServer === 'function') {
+      synced = await pushInscriptionPendingToServer(pending);
+    } else if (typeof pushToServer === 'function') {
+      try { await pushToServer('p5_inscriptions_pending', pending); synced = true; } catch (e2) {}
+    }
+    if (!synced) {
+      showMsg('Demande enregistrée, mais le serveur est injoignable : l\'admin ne sera pas notifié par e-mail tant que la connexion n\'est pas rétablie.', 'err');
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Soumettre ma demande'; }
+      return;
+    }
 
     if(typeof _updatePendingCount==='function') try{_updatePendingCount();}catch(e2){}
     if(typeof addLog==='function') try{addLog('accounts','Inscription: @'+username+' ('+nom+')');}catch(e2){}
