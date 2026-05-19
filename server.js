@@ -145,7 +145,12 @@ async function applyKeyUpdate(key, value, user) {
     console.log(`[INSCRIPTION] Mise à jour file d'attente (${next.length} entrée(s)) par ${user}`);
   } else if (key === 'p5_demandes_course' && Array.isArray(value)) {
     next = mergeDemandesCourse(prev, value);
-    notifications.onDemandesUpdated(prev, next, DB).catch((e) => console.error('[NOTIF]', e.message));
+    try {
+      const withFlags = await notifications.onDemandesUpdated(prev, next, DB);
+      if (withFlags) next = withFlags;
+    } catch (e) {
+      console.error('[NOTIF]', e.message);
+    }
   } else {
     next = value;
   }
@@ -513,6 +518,18 @@ io.on('connection', (socket) => {
     }
   } catch (e) {
     console.error('[NOTIF] Rattrapage inscriptions:', e.message);
+  }
+  try {
+    const patchedDem = await notifications.flushPendingDemandeEmails(DB);
+    if (patchedDem) {
+      DB.p5_demandes_course = patchedDem;
+      markMongoDirty('p5_demandes_course');
+      if (isMongoConnected()) {
+        await db.saveKey('p5_demandes_course', patchedDem);
+      }
+    }
+  } catch (e) {
+    console.error('[NOTIF] Rattrapage demandes:', e.message);
   }
   server.listen(PORT, '0.0.0.0', () => {
     const { networkInterfaces } = require('os');
