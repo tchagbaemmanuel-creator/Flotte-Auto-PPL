@@ -22,6 +22,10 @@ services:
       # Alternative : une seule URI (sync: false — à coller manuellement)
       - key: MONGODB_URI
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

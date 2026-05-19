@@ -409,9 +409,12 @@ app.get('/api/status', async (req, res) => {
     mongoEnvPresent: mongoEnvHints,
     mongoConnectError: MONGODB_URI && !isMongoConnected() ? mErr : null,
     mail: mailer.isConfigured(),
+    mailProvider: mailer.getProvider(),
     mailFrom: mailer.isConfigured() ? mailer.resolveFrom() : null,
     mailVerifyError: mailer.getLastVerifyError(),
     mailEnv: {
+      BREVO_API_KEY: !!normalizeEnvString(process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY),
+      BREVO_SENDER_EMAIL: !!normalizeEnvString(process.env.BREVO_SENDER_EMAIL),
       SMTP_HOST: !!normalizeEnvString(process.env.SMTP_HOST),
       SMTP_USER: !!normalizeEnvString(process.env.SMTP_USER),
       SMTP_PASS: !!(process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD),
@@ -419,6 +422,11 @@ app.get('/api/status', async (req, res) => {
       APP_URL: !!normalizeEnvString(process.env.APP_URL || process.env.RENDER_EXTERNAL_URL),
       MAIL_ADMIN_NOTIFY: !!normalizeEnvString(process.env.MAIL_ADMIN_NOTIFY)
     },
+    mailHint: IS_RENDER && mailer.getProvider() === 'smtp'
+      ? 'Render bloque souvent le SMTP sortant (timeout). Ajoutez BREVO_API_KEY + BREVO_SENDER_EMAIL sur Render.'
+      : (!mailer.isConfigured()
+        ? 'Ajoutez BREVO_API_KEY (Render) ou SMTP_* (local).'
+        : null),
     hint
   });
 });

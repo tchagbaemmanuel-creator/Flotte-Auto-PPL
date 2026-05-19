@@ -60,6 +60,26 @@ Commit → **"Commit changes"**
 
 ---
 
+## E-mails (notifications admin / inscriptions)
+
+Sur le **plan gratuit Render**, le **SMTP sortant** (Gmail, port 587) est en général **bloqué** → erreur `Connection timeout` dans les logs.
+
+**Solution : Brevo** (gratuit, ~300 e-mails/jour) via API HTTPS :
+
+1. Compte sur https://www.brevo.com
+2. **Expéditeurs** → ajouter et valider `contact@prestigepoultry.com` (ou votre domaine)
+3. **SMTP & API** → créer une **clé API**
+4. Sur Render → **Environment** :
+   - `BREVO_API_KEY` = la clé `xkeysib-...`
+   - `BREVO_SENDER_EMAIL` = l'adresse validée chez Brevo
+   - `MAIL_ADMIN_NOTIFY` = e-mails qui reçoivent les alertes (séparés par des virgules)
+5. Redéployer → logs : `[MAIL] ✅ Brevo API OK`
+6. Vérifier : `/api/status` → `"mailProvider": "brevo"`, `"mailVerifyError": null`
+
+Gmail (`SMTP_*`) reste utilisable **en local** sur votre PC, pas sur Render gratuit.
+
+---
+
 ## ⚠️ Limitation plan gratuit Render
 
 Le service **s'endort après 15 minutes** d'inactivité.
