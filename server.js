@@ -2,7 +2,7 @@
  * ═══════════════════════════════════════════════════════════════
  *   FLOTTE PPL — Serveur de synchronisation temps réel
  *   Node.js + Socket.IO + JWT
- *   Compatible FlottePPL_v30.html
+ *   Compatible FlottePPL_v31.html
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -41,7 +41,7 @@ const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'flotte_ppl';
 const IS_RENDER     = process.env.RENDER === 'true';
 const DATA_FILE  = path.join(__dirname, 'data', 'flotte_data.json');
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
-const HTML_FILE  = path.join(__dirname, 'FlottePPL_v30.html');
+const HTML_FILE  = path.join(__dirname, 'FlottePPL_v31.html');
 
 // ─── INITIALISATION ───────────────────────────────────────────
 const app    = express();
@@ -254,17 +254,19 @@ app.get('/', (req, res) => {
     res.send(`
       <html><body style="font-family:sans-serif;padding:40px;background:#f8f6f2">
         <h2>⚠️ Fichier introuvable</h2>
-        <p>Placez <strong>FlottePPL_v30.html</strong> dans le même dossier que <code>server.js</code></p>
+        <p>Placez <strong>FlottePPL_v31.html</strong> dans le même dossier que <code>server.js</code></p>
         <p>Dossier attendu : <code>${__dirname}</code></p>
       </body></html>
     `);
   }
 });
 
-app.get('/FlottePPL_v30.html', (req, res) => {
+app.get('/FlottePPL_v31.html', (req, res) => {
   if (fs.existsSync(HTML_FILE)) res.sendFile(HTML_FILE);
   else res.redirect('/');
 });
+
+app.get('/FlottePPL_v30.html', (req, res) => res.redirect('/FlottePPL_v31.html'));
 
 // ── AUTH : Login ──
 app.post('/api/auth/login', async (req, res) => {
@@ -388,7 +390,7 @@ app.get('/api/status', async (req, res) => {
 
   res.json({
     status: 'online',
-    version: 'FlottePPL v30',
+    version: 'FlottePPL v31',
     connectedUsers: connected,
     dataKeys: Object.keys(DB).length,
     uptime: Math.floor(process.uptime()) + 's',

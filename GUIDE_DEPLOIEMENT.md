@@ -21,7 +21,7 @@ GitHub Pages ne supporte que les sites statiques.
 
 Dans le dépôt vide, cliquer **"uploading an existing file"** et déposer :
 - `server.js`
-- `FlottePPL_v30.html`
+- `FlottePPL_v31.html`
 - `package.json`
 - `render.yaml`
 - `README.md`

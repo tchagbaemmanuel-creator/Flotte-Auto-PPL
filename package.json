@@ -1,7 +1,7 @@
 {
   "name": "flotte-ppl-server",
   "version": "1.0.0",
-  "description": "Serveur de synchronisation temps réel pour Flotte PPL v19",
+  "description": "Serveur de synchronisation temps réel pour Flotte PPL v31",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
