@@ -4620,7 +4620,7 @@ function startPreLoginCloudSync() {
         try { initChips(); } catch (e) {}
       });
     }
-  }, 10000);
+  }, 60000);
 }
 
 // ─── STOCKAGE (localStorage + IndexedDB 1 Go + sync réseau) ───
@@ -6941,10 +6941,7 @@ function resetAccForm(){
 
 function previewAccSig(input, field){
   var file=input.files[0]; if(!file) return;
-  if(file.size>200*1024){ showT('Image trop grande (max 200KB)','w'); input.value=''; return; }
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var b64=e.target.result;
+  readB64(file, PPL_IMG_SMALL).then(function(b64){
     var isSignature=(field==='signature');
     var previewId=isSignature?'ac-sig-preview':'ac-stamp-preview';
     var dataId=isSignature?'ac-sig-data':'ac-stamp-data';
@@ -6962,8 +6959,7 @@ function previewAccSig(input, field){
     var dataEl=document.getElementById(dataId); if(dataEl) dataEl.value=b64;
     var delEl=document.getElementById(delId); if(delEl) delEl.style.display='';
     input.value='';
-  };
-  reader.readAsDataURL(file);
+  }).catch(function(){ showT('Erreur lecture image','w'); input.value=''; });
 }
 
 function clearAccSig(field){
@@ -7103,13 +7099,110 @@ function requestResetPass(){
   }
 }
 
-// ═══ PHOTO UTILS ═══
-function readB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=rej;r.readAsDataURL(file);});}
+// ═══ PHOTO UTILS — compression automatique à l'import ═══
+var PPL_IMG_DEFAULTS = { maxWidth: 1600, maxHeight: 1600, quality: 0.82, maxBytes: 380 * 1024 };
+var PPL_IMG_SMALL    = { maxWidth: 900, maxHeight: 900, quality: 0.8, maxBytes: 140 * 1024 };
+
+function pplEstimateB64Bytes(dataUrl){
+  if(!dataUrl || typeof dataUrl !== 'string') return 0;
+  var i = dataUrl.indexOf(',');
+  var b64 = i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+  return Math.round(b64.length * 0.75);
+}
+
+function pplCompressImageFile(file, opts){
+  opts = Object.assign({}, PPL_IMG_DEFAULTS, opts || {});
+  return new Promise(function(resolve, reject){
+    if(!file || !file.type || !file.type.startsWith('image/')){ reject(new Error('not-image')); return; }
+    if(file.size < 60 * 1024 && !opts.always){
+      var r0 = new FileReader();
+      r0.onload = function(e){ resolve(e.target.result); };
+      r0.onerror = reject;
+      r0.readAsDataURL(file);
+      return;
+    }
+    var img = new Image();
+    var objUrl = URL.createObjectURL(file);
+    img.onload = function(){
+      URL.revokeObjectURL(objUrl);
+      try {
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        var maxW = opts.maxWidth, maxH = opts.maxHeight;
+        var scale = Math.min(1, maxW / w, maxH / h);
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext('2d');
+        if(!ctx){ reject(new Error('canvas')); return; }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.drawImage(img, 0, 0, cw, ch);
+        var mime = opts.keepPng && file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        var q = opts.quality;
+        var dataUrl = canvas.toDataURL(mime, q);
+        var maxBytes = opts.maxBytes;
+        var attempts = 0;
+        while(pplEstimateB64Bytes(dataUrl) > maxBytes && attempts < 14){
+          attempts++;
+          if(q > 0.48){
+            q -= 0.06;
+            dataUrl = canvas.toDataURL(mime, q);
+          } else if(scale > 0.32){
+            scale *= 0.82;
+            cw = Math.max(1, Math.round(w * scale));
+            ch = Math.max(1, Math.round(h * scale));
+            canvas.width = cw;
+            canvas.height = ch;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, cw, ch);
+            ctx.drawImage(img, 0, 0, cw, ch);
+            q = Math.max(0.55, opts.quality - 0.1);
+            dataUrl = canvas.toDataURL(mime, q);
+          } else break;
+        }
+        resolve(dataUrl);
+      } catch(err) { reject(err); }
+    };
+    img.onerror = function(){ URL.revokeObjectURL(objUrl); reject(new Error('load')); };
+    img.src = objUrl;
+  });
+}
+
+function readB64(file, opts){
+  if(!file) return Promise.reject(new Error('no file'));
+  if(file.type && file.type.startsWith('image/')){
+    return pplCompressImageFile(file, opts).catch(function(){
+      return new Promise(function(res, rej){
+        var r = new FileReader();
+        r.onload = function(e){ res(e.target.result); };
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+    });
+  }
+  return new Promise(function(res, rej){
+    var r = new FileReader();
+    r.onload = function(e){ res(e.target.result); };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
 async function prevMain(input,prevId,imgId){
   const file=input.files[0];if(!file)return;
-  const b64=await readB64(file);
-  const pv=document.getElementById(prevId);const img=document.getElementById(imgId);
-  if(img){img.src=b64;if(pv)pv.style.display="block";}
+  try{
+    const b64=await readB64(file);
+    const pv=document.getElementById(prevId);const img=document.getElementById(imgId);
+    if(img){img.src=b64;if(pv)pv.style.display="block";}
+    if(file.type && file.type.startsWith('image/') && file.size > 120*1024){
+      var saved = pplEstimateB64Bytes(b64);
+      showT('Photo compressée (~'+Math.round(saved/1024)+' Ko)','s');
+    }
+  }catch(e){ showT('Erreur lecture photo','w'); }
+  input.value='';
 }
 function clearMainPhoto(imgId,prevId,inputId){
   var img=document.getElementById(imgId);if(img)img.src='';
@@ -8228,19 +8321,21 @@ function handleDocScan(input, nameId, b64Id){
   const nameEl = document.getElementById(nameId);
   const b64El  = document.getElementById(b64Id);
   if(nameEl) nameEl.textContent = '✅ ' + file.name;
-  readB64(file).then(b64 => {
+  readB64(file).then(function(b64){
     if(b64El) b64El.value = b64;
-    // Show inline preview
     const prevId = b64Id.replace('-b64','-prev');
     const prevEl = document.getElementById(prevId);
     if(prevEl){
       if(file.type.startsWith('image/')){
-        prevEl.innerHTML = '<img src="'+b64+'" style="max-width:100%;max-height:90px;border-radius:6px;margin-top:5px;border:1px solid var(--bd)">';
+        var ko = Math.round(pplEstimateB64Bytes(b64) / 1024);
+        prevEl.innerHTML = '<img src="'+b64+'" style="max-width:100%;max-height:90px;border-radius:6px;margin-top:5px;border:1px solid var(--bd)">'+
+          (file.size > 100*1024 ? '<div style="font-size:9px;color:var(--g);margin-top:3px">Compressé ~'+ko+' Ko</div>' : '');
       } else if(file.type === 'application/pdf'){
         prevEl.innerHTML = '<div style="background:#FEE2E2;border:1px solid #FCA5A5;border-radius:6px;padding:8px;margin-top:5px;font-size:10px;color:#991B1B;display:flex;align-items:center;gap:6px"><span style="font-size:16px">📄</span><span>'+file.name+' (PDF)</span><a href="'+b64+'" download="'+file.name+'" style="margin-left:auto;font-size:9px;color:var(--maroon);font-weight:700">⬇ Télécharger</a></div>';
       }
     }
-  });
+    input.value='';
+  }).catch(function(){ showT('Erreur import document','w'); input.value=''; });
 }
 
 // ─── VEHICLE SELECT IN DRIVER FORM ───
@@ -13897,15 +13992,14 @@ var _vFactureData = null;
 function _handleVFacture(input){
   var file=input.files[0]; if(!file) return;
   if(file.size>5*1024*1024){showT('Max 5 Mo','w');return;}
-  var r=new FileReader();
-  r.onload=function(e){
-    _vFactureData=e.target.result;
+  readB64(file).then(function(b64){
+    _vFactureData=b64;
     var n=document.getElementById('v-facture-name');
     var c=document.getElementById('v-facture-clear');
     if(n)n.textContent=file.name;
     if(c)c.style.display='';
-  };
-  r.readAsDataURL(file);
+    input.value='';
+  }).catch(function(){ showT('Erreur import facture','w'); input.value=''; });
 }
 function _clearVFacture(){
   _vFactureData=null;
@@ -14509,13 +14603,11 @@ window.pvgAddEtape = function(){
 window.pvgHandleBilletFile = function(inp){
   var file = inp.files[0]; if(!file) return;
   var label = document.getElementById('pvg-billet-file-name');
-  if(file.size > 3000000){ showT('Fichier trop volumineux (max 3 Mo)','w'); return; }
-  var reader = new FileReader();
-  reader.onload = function(e){
-    document.getElementById('pvg-billet-b64').value = e.target.result;
+  readB64(file).then(function(b64){
+    document.getElementById('pvg-billet-b64').value = b64;
     if(label) label.textContent = '✅ '+file.name+' importé';
-  };
-  reader.readAsDataURL(file);
+    inp.value='';
+  }).catch(function(){ showT('Erreur import billet','w'); inp.value=''; });
 };
 
 window.savePVGForm = function(){
@@ -15200,25 +15292,25 @@ if(document.readyState==='loading'){
   observer.observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['style']});
 })();
 
-window._handleAccPhotos = function(input){
+window._handleAccPhotos = async function(input){
   var files=Array.from(input.files).slice(0,4);
   _accImages=[];
   var preview=document.getElementById('acc-photos-preview');
   if(preview) preview.innerHTML='';
-  files.forEach(function(file){
-    if(file.size>3*1024*1024){showT('Image trop grande (max 3Mo)','w');return;}
-    var r=new FileReader();
-    r.onload=function(e){
-      _accImages.push(e.target.result);
+  for(var i=0;i<files.length;i++){
+    var file=files[i];
+    try{
+      var b64=await readB64(file);
+      _accImages.push(b64);
       if(preview){
         var img=document.createElement('div');
         img.style.cssText='position:relative;display:inline-block';
-        img.innerHTML='<img src="'+e.target.result+'" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:2px solid var(--bd)">';
+        img.innerHTML='<img src="'+b64+'" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:2px solid var(--bd)">';
         preview.appendChild(img);
       }
-    };
-    r.readAsDataURL(file);
-  });
+    }catch(e){ showT('Erreur photo accident','w'); }
+  }
+  input.value='';
 };
 
 // Afficher les photos dans la liste accidents
@@ -17808,20 +17900,18 @@ function importFuelPlanning(input){
   var ext=name.split('.').pop().toLowerCase();
   showT('📄 "'+name+'" chargé','s');
   if(['jpg','jpeg','png'].includes(ext)){
-    var reader=new FileReader();
-    reader.onload=function(e){
+    readB64(file).then(function(b64){
       openAddFuelPlan(name);
       setTimeout(function(){
         var modal=document.getElementById('mo-add-fuel-plan');
         if(!modal) return;
         var prev=document.createElement('div');
         prev.style.cssText='margin-bottom:10px;text-align:center';
-        prev.innerHTML='<img src="'+e.target.result+'" style="max-height:180px;border-radius:8px;border:2px solid var(--bd)">';
+        prev.innerHTML='<img src="'+b64+'" style="max-height:180px;border-radius:8px;border:2px solid var(--bd)">';
         var body=modal.querySelector('div>div');
         if(body) body.insertBefore(prev,body.children[body.children.length-3]);
       },200);
-    };
-    reader.readAsDataURL(file);
+    }).catch(function(){ showT('Erreur import image','w'); });
   } else {
     openAddFuelPlan(name);
   }
@@ -18941,11 +19031,7 @@ function saveSigGrade2b(accId){
 function uploadSigImage(input, accId, field){
   var file = input.files[0];
   if(!file) return;
-  // Size check — warn if > 200KB
-  if(file.size > 200*1024){ showT('Image trop grande (max 200KB). Compressez avant import.','w'); input.value=''; return; }
-  var reader = new FileReader();
-  reader.onload = function(e){
-    var b64 = e.target.result;
+  readB64(file, Object.assign({}, PPL_IMG_SMALL, { keepPng: true })).then(function(b64){
     var sigs = gSigs();
     var idx = sigs.findIndex(function(s){return s.accId===accId;});
     if(idx>=0) sigs[idx][field] = b64;
@@ -18954,8 +19040,7 @@ function uploadSigImage(input, accId, field){
     input.value='';
     try{renderAccs();}catch(e){}
     showT((field==='signature'?'Signature':'Cachet')+' enregistré ✅','s');
-  };
-  reader.readAsDataURL(file);
+  }).catch(function(){ showT('Erreur lecture image','w'); input.value=''; });
 }
 
 function removeSigImage(accId, field){
@@ -19964,13 +20049,12 @@ function pvgCalcTotal() {
 function pvgHandleBillet(input) {
   var file = input.files[0];
   if (!file) return;
-  if (file.size > 500000) { showT('Billet trop volumineux (max 500 Ko)', 'w'); return; }
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    document.getElementById('pvg-billet-data').value = e.target.result;
+  readB64(file).then(function(b64) {
+    document.getElementById('pvg-billet-data').value = b64;
     document.getElementById('pvg-billet-name').value = file.name;
     document.getElementById('pvg-billet-type').value = file.type;
     var prev = document.getElementById('pvg-billet-preview');
+    var ko = Math.round(pplEstimateB64Bytes(b64) / 1024);
     prev.style.display = 'block';
     if (file.type === 'application/pdf') {
       prev.innerHTML =
@@ -19978,18 +20062,18 @@ function pvgHandleBillet(input) {
         '<span style="font-size:22px">📄</span>' +
         '<div><div style="font-size:11px;font-weight:700;color:#1D4ED8">' + file.name + '</div>' +
         '<div style="font-size:9px;color:var(--t3)">' + (file.size/1024).toFixed(0) + ' Ko — PDF</div></div>' +
-        '<a href="' + e.target.result + '" download="' + file.name + '" style="margin-left:auto;font-size:11px;color:var(--maroon);text-decoration:none;font-weight:600">⬇ Télécharger</a>' +
+        '<a href="' + b64 + '" download="' + file.name + '" style="margin-left:auto;font-size:11px;color:var(--maroon);text-decoration:none;font-weight:600">⬇ Télécharger</a>' +
         '</div>';
     } else {
       prev.innerHTML =
         '<div style="position:relative;display:inline-block">' +
-        '<img src="' + e.target.result + '" style="max-width:100%;max-height:200px;border-radius:7px;border:1px solid var(--bd)">' +
-        '<div style="font-size:9px;color:var(--t3);margin-top:4px">' + file.name + ' — ' + (file.size/1024).toFixed(0) + ' Ko</div>' +
+        '<img src="' + b64 + '" style="max-width:100%;max-height:200px;border-radius:7px;border:1px solid var(--bd)">' +
+        '<div style="font-size:9px;color:var(--t3);margin-top:4px">' + file.name + ' — ~' + ko + ' Ko</div>' +
         '</div>';
     }
+    input.value='';
     showT('Billet importé avec succès ✈️', 's');
-  };
-  reader.readAsDataURL(file);
+  }).catch(function(){ showT('Erreur import billet', 'w'); input.value=''; });
 }
 
 // ── Gestion étapes du programme ──

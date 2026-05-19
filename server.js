@@ -13,6 +13,7 @@ const jwt        = require('jsonwebtoken');
 const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
+const compression = require('compression');
 const db         = require('./lib/database');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -49,6 +50,7 @@ const io     = new Server(server, {
   maxHttpBufferSize: 1e9 // 1 Go — sync photos / exports
 });
 
+app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '1gb' }));
 
@@ -75,6 +77,28 @@ function mongoConnectError() {
   return db.getState().error;
 }
 
+/** Clés modifiées depuis la dernière écriture Mongo (évite saveAll toutes les 30 s → bande passante). */
+const dirtyMongoKeys = new Set();
+
+function markMongoDirty(key) {
+  if (key && !key.startsWith('_ppl')) dirtyMongoKeys.add(key);
+}
+
+async function flushDirtyMongoKeys() {
+  if (!isMongoConnected() || dirtyMongoKeys.size === 0) return;
+  const keys = [...dirtyMongoKeys];
+  dirtyMongoKeys.clear();
+  for (const key of keys) {
+    try {
+      await db.saveKey(key, DB[key]);
+      if (key === 'p5_ac' || key === 'p5_accounts') await db.persistUsersFromData(DB);
+    } catch (e) {
+      console.error('[MONGO] Clé ' + key + ':', e.message);
+      dirtyMongoKeys.add(key);
+    }
+  }
+}
+
 function saveData(data) {
   const persistFile = !(isMongoConnected() && IS_RENDER);
   if (persistFile) {
@@ -84,14 +108,19 @@ function saveData(data) {
       fs.renameSync(tmp, DATA_FILE);
     } catch (e) { console.error('[DATA] Erreur écriture:', e.message); }
   }
-  if (isMongoConnected()) {
+  // En local sans Render : sauvegarde Mongo complète occasionnelle OK
+  if (isMongoConnected() && !IS_RENDER) {
     db.saveAll(data).catch((e) => console.error('[MONGO] Erreur écriture:', e.message));
   }
 }
 
 function persistKeyToMongo(key) {
   if (!isMongoConnected() || !key || key.startsWith('_ppl')) return;
-  db.saveKey(key, DB[key]).catch((e) => console.error('[MONGO] Clé ' + key + ':', e.message));
+  markMongoDirty(key);
+  db.saveKey(key, DB[key]).catch((e) => {
+    console.error('[MONGO] Clé ' + key + ':', e.message);
+    markMongoDirty(key);
+  });
   if (key === 'p5_ac' || key === 'p5_accounts') {
     db.persistUsersFromData(DB).catch((e) => console.error('[MONGO] users:', e.message));
   }
@@ -168,14 +197,20 @@ async function initMongo() {
   await db.syncUsersWithData(DB);
 }
 
-// Auto-sauvegarde toutes les 30 secondes
-setInterval(() => saveData(DB), 30000);
+// Auto-sauvegarde : fichier local OU clés Mongo modifiées uniquement (pas de saveAll sur Render)
+setInterval(() => {
+  if (isMongoConnected() && IS_RENDER) {
+    flushDirtyMongoKeys().catch((e) => console.error('[MONGO] flush:', e.message));
+  } else {
+    saveData(DB);
+  }
+}, 30000);
 
 // Sauvegarde à la fermeture
 async function shutdown(signal) {
   try {
+    if (isMongoConnected()) await flushDirtyMongoKeys();
     saveData(DB);
-    if (isMongoConnected()) await db.saveAll(DB);
   } catch (e) {
     console.error('[SHUTDOWN]', e.message);
   }
@@ -427,8 +462,11 @@ io.on('connection', (socket) => {
     onlineUsers.delete(socket.id);
     socket.broadcast.emit('user-left', { name: userName });
     io.emit('users-online', [...onlineUsers.values()]);
-    // Sauvegarde finale
-    saveData(DB);
+    if (isMongoConnected() && IS_RENDER) {
+      flushDirtyMongoKeys().catch((e) => console.error('[MONGO] flush disconnect:', e.message));
+    } else {
+      saveData(DB);
+    }
   });
 });
 
