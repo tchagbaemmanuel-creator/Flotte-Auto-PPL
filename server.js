@@ -386,6 +386,27 @@ app.get('/api/status', async (req, res) => {
     try { mongoStorage = await db.getStorageStats(); } catch (_) {}
   }
 
+  const mailEnvPresent = {
+    SMTP_HOST: !!normalizeEnvString(process.env.SMTP_HOST),
+    SMTP_PORT: !!normalizeEnvString(process.env.SMTP_PORT),
+    SMTP_USER: !!normalizeEnvString(process.env.SMTP_USER),
+    SMTP_PASS: !!(process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD),
+    MAIL_FROM: !!normalizeEnvString(process.env.MAIL_FROM),
+    APP_URL: !!normalizeEnvString(process.env.APP_URL || process.env.RENDER_EXTERNAL_URL)
+  };
+  const mailOk = mailer.isConfigured();
+  let mailHint = null;
+  if (!mailOk) {
+    const missing = Object.entries(mailEnvPresent)
+      .filter(([k, v]) => !v && k !== 'SMTP_PORT' && k !== 'MAIL_FROM' && k !== 'APP_URL')
+      .map(([k]) => k);
+    if (missing.length) {
+      mailHint = `Variables SMTP manquantes sur Render : ${missing.join(', ')} (puis redéployez).`;
+    } else {
+      mailHint = 'SMTP incomplet — vérifiez SMTP_HOST, SMTP_USER et SMTP_PASS sur Render.';
+    }
+  }
+
   res.json({
     status: 'online',
     version: 'FlottePPL v30',
@@ -401,7 +422,9 @@ app.get('/api/status', async (req, res) => {
     mongoUriResolved: !!MONGODB_URI,
     mongoEnvPresent: mongoEnvHints,
     mongoConnectError: MONGODB_URI && !isMongoConnected() ? mErr : null,
-    mail: mailer.isConfigured(),
+    mail: mailOk,
+    mailEnvPresent,
+    mailHint,
     hint
   });
 });
