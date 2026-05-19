@@ -798,7 +798,7 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="login-title">Flotte PPL</div>
     <div class="login-sub">Gestion de Parc Automobile</div>
     <div class="login-err" id="login-err" style="display:none">❌ Identifiants incorrects</div>
-    <input class="lin" id="lu" placeholder="Nom d'utilisateur" type="text" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
+    <input class="lin" id="lu" placeholder="Identifiant, e-mail ou nom d'utilisateur" type="text" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
     <input class="lin" id="lp" placeholder="Mot de passe" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="login-btn" onclick="doLogin()">Se connecter →</button>
     <div style="text-align:center;margin-top:8px"><button onclick="showLoginResetRequest()" style="background:none;border:none;color:rgba(139,26,26,.45);font-size:10px;cursor:pointer;text-decoration:underline">Mot de passe oublié ? Contacter l'admin</button></div>
@@ -1739,7 +1739,7 @@ textarea.fi{resize:vertical;min-height:50px;}
           <div id="storage-bar" style="height:100%;border-radius:99px;background:#DC2626;width:0%;transition:width .5s"></div>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-top:3px">
-          <span>0</span><span id="storage-limit-text">Limite ~5 MB</span>
+          <span>0</span><span id="storage-limit-text">Limite ~1 Go</span>
         </div>
       </div>
       <!-- Détail par module -->
@@ -3029,7 +3029,7 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="fsec">✍️ Signatures &amp; Autorisations</div>
     <div class="fg3">
       <div class="fg"><label class="fl">Responsable Parc Auto *</label><input class="fi" id="am-resp1" placeholder="Nom du responsable parc"></div>
-      <div class="fg"><label class="fl">Chargé d'opération *</label><input class="fi" id="am-resp2" placeholder="Nom du chargé d'opération"></div>
+      <div class="fg"><label class="fl">Chargée d'opération *</label><input class="fi" id="am-resp2" placeholder="Nom de la chargée d'opération"></div>
       <div class="fg"><label class="fl">N° Bon de réparation</label><input class="fi" id="am-bon" placeholder="Auto-généré si vide" readonly style="background:var(--s3);color:var(--t3)"></div>
     </div>
     <div class="fsec">📸 Justificatifs</div>
@@ -4323,6 +4323,20 @@ const SERVER_URL = (function(){
   return window.location.origin;
 })();
 
+/** Photos stockées dans MongoDB GridFS → URL complète pour affichage */
+function pplResolveMedia(src) {
+  if (!src || typeof src !== 'string') return src;
+  if (src.startsWith('/api/media/')) return SERVER_URL + src;
+  if (src.startsWith('ppl-media://')) return SERVER_URL + '/api/media/' + src.slice(12);
+  return src;
+}
+function pplMapMediaFields(item, fields) {
+  if (!item || typeof item !== 'object') return item;
+  var o = Object.assign({}, item);
+  (fields || []).forEach(function (f) { if (o[f]) o[f] = pplResolveMedia(o[f]); });
+  return o;
+}
+
 let _socket     = null;
 let _isOnline   = false;
 let _jwtToken   = localStorage.getItem('_ppl_jwt') || null;
@@ -4456,7 +4470,9 @@ function connectSocket(){
     // Mise à jour d'une clé par un autre utilisateur
     _socket.on('data-update', ({ key, value, changedBy }) => {
       if (!key || key === '_ppl_jwt') return;
-      localStorage.setItem(key, JSON.stringify(value));
+      var val = value;
+      if (key === 'p5_ac' || key === 'p5_accounts') val = mergeAccountsFromServer(value);
+      localStorage.setItem(key, JSON.stringify(val));
       try { renderAll(); } catch(e) {}
       if ((key === 'p5_ac' || key === 'p5_accounts') && !(typeof CU !== 'undefined' && CU)) {
         try { initChips(); } catch (e) {}
@@ -4528,6 +4544,22 @@ async function pushToServer(key, value) {
 
 // ─── SYNC DEPUIS SERVEUR ──────────────────────────────
 /** opts.quiet : pas de toast (ex. rafraîchissement en arrière-plan sur l’écran de connexion). */
+function mergeAccountsFromServer(incoming) {
+  if (!Array.isArray(incoming)) return incoming;
+  var local = [];
+  try { local = load(K.accounts) || []; } catch (e) { local = []; }
+  var byUser = {};
+  local.forEach(function (a) {
+    if (a && a.username) byUser[String(a.username).trim().toLowerCase()] = a;
+  });
+  return incoming.map(function (srv) {
+    if (!srv || !srv.username) return srv;
+    var loc = byUser[String(srv.username).trim().toLowerCase()];
+    if (loc && loc.password && !srv.password) return Object.assign({}, srv, { password: loc.password });
+    return srv;
+  });
+}
+
 async function syncFromServer(opts) {
   try {
     const quiet = opts && opts.quiet;
@@ -4537,7 +4569,10 @@ async function syncFromServer(opts) {
     if (!res.ok) return;
     const data = await res.json();
     Object.entries(data).forEach(([k, v]) => {
-      if (k && !k.startsWith('_ppl_jwt')) localStorage.setItem(k, JSON.stringify(v));
+      if (!k || k.startsWith('_ppl_jwt')) return;
+      var val = v;
+      if (k === 'p5_ac' || k === 'p5_accounts') val = mergeAccountsFromServer(v);
+      localStorage.setItem(k, JSON.stringify(val));
     });
     try { renderAll(); } catch(e) {}
     if (!quiet) showT('✅ Données synchronisées', 's');
@@ -4588,25 +4623,165 @@ function startPreLoginCloudSync() {
   }, 10000);
 }
 
-// ─── STOCKAGE (localStorage + sync réseau) ───
-const load = k => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch(e) { return null; } };
-// Note: save() est défini plus bas avec protection QuotaExceeded + sync disque
-function save(k, v){
-  try {
-    localStorage.setItem(k, JSON.stringify(v));
-    // Synchroniser si socket connecté (avec ou sans JWT)
-    if(typeof pushToServer === 'function' && typeof _socket !== 'undefined' && _socket && _socket.connected) {
-      try{ pushToServer(k, v); }catch(e){}
+// ─── STOCKAGE (localStorage + IndexedDB 1 Go + sync réseau) ───
+var STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024; // 1 Go
+var PPL_IDB_NAME = 'flotte_ppl_v1';
+var PPL_IDB_STORE = 'kv';
+var PPL_IDB_MARKER = '__PPL_IDB__';
+var PPL_IDB_THRESHOLD = 200 * 1024; // >200 Ko → IndexedDB
+var _pplIdb = null;
+window._pplIdbCache = window._pplIdbCache || {};
+
+function openPplIdb(cb){
+  if(_pplIdb){ cb(_pplIdb); return; }
+  if(typeof indexedDB === 'undefined'){ cb(null); return; }
+  var req = indexedDB.open(PPL_IDB_NAME, 1);
+  req.onupgradeneeded = function(e){
+    var db = e.target.result;
+    if(!db.objectStoreNames.contains(PPL_IDB_STORE)) db.createObjectStore(PPL_IDB_STORE);
+  };
+  req.onsuccess = function(){ _pplIdb = req.result; cb(_pplIdb); };
+  req.onerror = function(){ cb(null); };
+}
+
+function idbSet(key, val, cb){
+  openPplIdb(function(db){
+    if(!db){ if(cb) cb(false); return; }
+    try{
+      var tx = db.transaction(PPL_IDB_STORE, 'readwrite');
+      tx.objectStore(PPL_IDB_STORE).put(val, key);
+      tx.oncomplete = function(){ if(cb) cb(true); };
+      tx.onerror = function(){ if(cb) cb(false); };
+    }catch(e){ if(cb) cb(false); }
+  });
+}
+
+function idbGet(key, cb){
+  openPplIdb(function(db){
+    if(!db){ cb(null); return; }
+    try{
+      var tx = db.transaction(PPL_IDB_STORE, 'readonly');
+      var r = tx.objectStore(PPL_IDB_STORE).get(key);
+      r.onsuccess = function(){ cb(r.result !== undefined ? r.result : null); };
+      r.onerror = function(){ cb(null); };
+    }catch(e){ cb(null); }
+  });
+}
+
+function idbGetAllKeys(cb){
+  openPplIdb(function(db){
+    if(!db){ cb([]); return; }
+    try{
+      var tx = db.transaction(PPL_IDB_STORE, 'readonly');
+      var r = tx.objectStore(PPL_IDB_STORE).getAllKeys();
+      r.onsuccess = function(){ cb(r.result || []); };
+      r.onerror = function(){ cb([]); };
+    }catch(e){ cb([]); }
+  });
+}
+
+function idbEstimateSize(cb){
+  openPplIdb(function(db){
+    if(!db){ cb(0); return; }
+    var total = 0;
+    try{
+      var tx = db.transaction(PPL_IDB_STORE, 'readonly');
+      var store = tx.objectStore(PPL_IDB_STORE);
+      var req = store.openCursor();
+      req.onsuccess = function(e){
+        var cur = e.target.result;
+        if(cur){
+          try{ total += JSON.stringify(cur.value).length * 2; }catch(err){}
+          cur.continue();
+        } else cb(total);
+      };
+      req.onerror = function(){ cb(total); };
+    }catch(e2){ cb(0); }
+  });
+}
+
+function initPplIdbCache(done){
+  openPplIdb(function(db){
+    if(!db){ if(done) done(); return; }
+    try{
+      var tx = db.transaction(PPL_IDB_STORE, 'readonly');
+      var store = tx.objectStore(PPL_IDB_STORE);
+      var req = store.openCursor();
+      req.onsuccess = function(e){
+        var cur = e.target.result;
+        if(cur){
+          window._pplIdbCache[cur.key] = cur.value;
+          cur.continue();
+        } else if(done) done();
+      };
+      req.onerror = function(){ if(done) done(); };
+    }catch(e){ if(done) done(); }
+  });
+}
+
+function _pplPushServer(k, v){
+  if(typeof pushToServer === 'function' && typeof _socket !== 'undefined' && _socket && _socket.connected) {
+    try{ pushToServer(k, v); }catch(e){}
+  }
+}
+
+function _pplSaveToIdb(k, v){
+  window._pplIdbCache[k] = v;
+  idbSet(k, v, function(ok){
+    if(ok){
+      try{ localStorage.setItem(k, PPL_IDB_MARKER); }catch(e){}
+      _pplPushServer(k, v);
+    } else {
+      var msg = '⚠️ Stockage plein (limite 1 Go). Libérez de l\'espace dans Comptes > Gestionnaire de stockage.';
+      if(typeof showT === 'function') showT(msg, 'w');
+      else alert(msg);
     }
+  });
+}
+
+window._pplSaveCore = function(k, v){
+  if(!k || k === '_ppl_jwt') return;
+  var json;
+  try{ json = JSON.stringify(v); }catch(e){ return; }
+  var bytes = (json.length + String(k).length) * 2;
+  if(bytes > PPL_IDB_THRESHOLD && typeof indexedDB !== 'undefined'){
+    _pplSaveToIdb(k, v);
+    return;
+  }
+  try {
+    localStorage.setItem(k, json);
+    delete window._pplIdbCache[k];
+    _pplPushServer(k, v);
   } catch(e) {
     if(e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
+      try{ localStorage.removeItem('p5_autosave'); }catch(e2){}
+      try{
+        localStorage.setItem(k, json);
+        delete window._pplIdbCache[k];
+        _pplPushServer(k, v);
+        return;
+      }catch(e3){}
+      if(typeof indexedDB !== 'undefined'){ _pplSaveToIdb(k, v); return; }
       var msg = '⚠️ Stockage plein ! Allez dans Comptes > Gestionnaire de stockage.';
       if(typeof showT === 'function') showT(msg, 'w');
       else alert(msg);
-      return;
     }
   }
-}
+};
+
+function save(k, v){ window._pplSaveCore(k, v); }
+
+const load = k => {
+  try {
+    var raw = localStorage.getItem(k);
+    if(raw === PPL_IDB_MARKER){
+      if(window._pplIdbCache && Object.prototype.hasOwnProperty.call(window._pplIdbCache, k))
+        return window._pplIdbCache[k];
+      return null;
+    }
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+};
 const uid=()=>Date.now()+Math.floor(Math.random()*9999);
 
 const DEF_V=[
@@ -4660,12 +4835,12 @@ function initData(){
   if(!load('p5_km_hebdo'))save('p5_km_hebdo',[]);
 }
 
-const gV=()=>load(K.vehicles)||[];
-const gD=()=>load(K.drivers)||[];
+const gV=()=>(load(K.vehicles)||[]).map(function(v){return pplMapMediaFields(v,['photo']);});
+const gD=()=>(load(K.drivers)||[]).map(function(d){return pplMapMediaFields(d,['photo','licScan','licScanVerso']);});
 const gT=()=>load(K.trips)||[];
 const gMs=()=>load(K.missions)||[];
-const gE=()=>load(K.maint)||[];
-const gF=()=>load(K.fuel)||[];
+const gE=()=>(load(K.maint)||[]).map(function(m){return pplMapMediaFields(m,['photo']);});
+const gF=()=>(load(K.fuel)||[]).map(function(f){return pplMapMediaFields(f,['recu','photo']);});
 const gDc=()=>load(K.docs)||[];
 const gL=()=>load(K.logs)||[];
 const gAcc=()=>load(K.accounts)||[];
@@ -4757,24 +4932,73 @@ function initChips(){
 }
 function quickLogin(u){
   document.getElementById("lu").value=u;
-  document.getElementById("lp").value='';
   document.getElementById("lp").focus();
+}
+function _normLoginId(s){ return (s||'').trim().toLowerCase(); }
+function findLocalAccount(loginId, password){
+  var allAccs = [];
+  try{ allAccs = gAcc(); } catch(e){}
+  if(!allAccs || !allAccs.length) allAccs = DEF_ACC.slice();
+  var lid = _normLoginId(loginId);
+  function matchAcc(a){
+    if(!a || a.active === false || !a.password || a.password !== password) return false;
+    if(a.username && _normLoginId(a.username) === lid) return true;
+    if(a.email && _normLoginId(a.email) === lid) return true;
+    if(a.name && _normLoginId(a.name) === lid) return true;
+    return false;
+  }
+  for(var i=0;i<allAccs.length;i++){ if(matchAcc(allAccs[i])) return allAccs[i]; }
+  for(var j=0;j<DEF_ACC.length;j++){ if(matchAcc(DEF_ACC[j])) return DEF_ACC[j]; }
+  return null;
+}
+function upsertAccountFromLogin(cloudUser, password){
+  var accs = [];
+  try{ accs = gAcc(); } catch(e){ accs = []; }
+  var idx = accs.findIndex(function(a){
+    return a && (a.id === cloudUser.id || _normLoginId(a.username) === _normLoginId(cloudUser.username));
+  });
+  var merged = {
+    id: cloudUser.id,
+    name: cloudUser.name,
+    username: cloudUser.username,
+    password: password,
+    role: cloudUser.role,
+    email: cloudUser.email || '',
+    dept: cloudUser.dept || '',
+    active: true
+  };
+  if(idx >= 0){
+    merged = Object.assign({}, accs[idx], merged);
+    accs[idx] = merged;
+  } else {
+    if(!merged.id) merged.id = uid();
+    accs.push(merged);
+  }
+  save(K.accounts, accs);
+  return merged;
+}
+function _loginHasServer(){
+  var proto = window.location.protocol;
+  var port  = window.location.port;
+  var host  = window.location.hostname;
+  var isFileProtocol = (proto === 'file:');
+  var isLocalNoServer = (host === 'localhost' || host === '127.0.0.1') &&
+                        (port !== '3000' && port !== '3443');
+  return !isFileProtocol && !isLocalNoServer;
 }
 function doLogin(){
   var loginBtn = document.querySelector('.login-btn');
   if(loginBtn){ loginBtn.disabled=true; loginBtn.textContent='Connexion...'; }
 
-  var u = (document.getElementById("lu").value||"").trim().toLowerCase();
+  var loginId = (document.getElementById("lu").value||"").trim();
   var p = document.getElementById("lp").value||"";
   var errEl = document.getElementById("login-err");
 
-  // Compteur d'échecs
   if(!window._loginFails) window._loginFails = 0;
 
   function showErr(msg){
     if(errEl){ errEl.style.display="block"; errEl.textContent=msg; }
     if(loginBtn){ loginBtn.disabled=false; loginBtn.textContent='Se connecter →'; }
-    // Après 3 échecs, afficher le panneau d'urgence
     window._loginFails++;
     if(window._loginFails >= 3){
       var emergEl = document.getElementById('login-emergency');
@@ -4782,67 +5006,47 @@ function doLogin(){
     }
   }
 
-  if(!u||!p){ showErr("❌ Identifiants requis"); return; }
-
-  // ── ÉTAPE 1 : Login LOCAL immédiat (toujours) ──
-  var allAccs = [];
-  try{ allAccs = gAcc(); } catch(e){}
-  if(!allAccs||!allAccs.length) allAccs = DEF_ACC;
-
-  var acc = null;
-  for(var i=0;i<allAccs.length;i++){
-    var a = allAccs[i];
-    if(a.active && a.username && a.username.toLowerCase()===u && a.password===p){
-      acc = a; break;
-    }
+  function finishLogin(acc){
+    window._loginFails = 0;
+    var emergEl2 = document.getElementById('login-emergency');
+    if(emergEl2) emergEl2.style.display = 'none';
+    CU = acc;
+    _afterLogin(acc, loginBtn);
   }
 
-  if(!acc){
-    // Essayer aussi avec les comptes par défaut en secours
-    for(var j=0;j<DEF_ACC.length;j++){
-      var da = DEF_ACC[j];
-      if(da.username.toLowerCase()===u && da.password===p){
-        acc = da; break;
+  if(!loginId || !p){ showErr("❌ Identifiants requis"); return; }
+
+  var hasServer = _loginHasServer();
+
+  if(hasServer && typeof loginCloud === 'function'){
+    loginCloud(_normLoginId(loginId), p).then(function(result){
+      if(result && result.success && result.user){
+        var acc = upsertAccountFromLogin(result.user, p);
+        setToken(result.token || null);
+        finishLogin(acc);
+        if(typeof connectSocket === 'function') connectSocket();
+        if(typeof syncFromServer === 'function'){
+          syncFromServer().then(function(){ try{ renderAll(); }catch(e){} });
+        }
+        return;
       }
-    }
-  }
-
-  if(!acc){
-    showErr("❌ Identifiants incorrects");
+      var localAcc = findLocalAccount(loginId, p);
+      if(localAcc){
+        finishLogin(localAcc);
+        return;
+      }
+      showErr(result && result.error ? ('❌ ' + result.error) : '❌ Identifiants incorrects');
+    }).catch(function(){
+      var localAcc = findLocalAccount(loginId, p);
+      if(localAcc) finishLogin(localAcc);
+      else showErr('❌ Identifiants incorrects');
+    });
     return;
   }
 
-  // Réinitialiser compteur d'échecs
-  window._loginFails = 0;
-  var emergEl2 = document.getElementById('login-emergency');
-  if(emergEl2) emergEl2.style.display = 'none';
-
-  // ── Login local réussi → afficher l'application ──
-  CU = acc;
-  _afterLogin(acc, loginBtn);
-
-  // ── ÉTAPE 2 : Sync cloud en arrière-plan (seulement si vrai serveur PPL) ──
-  var proto = window.location.protocol;
-  var port  = window.location.port;
-  var host  = window.location.hostname;
-  // Ne lancer le cloud QUE si on est sur un vrai serveur (port 3000/3443 ou déployé)
-  // Évite le blocage quand le fichier est ouvert en local (file:// ou http sans serveur)
-  var isFileProtocol = (proto === 'file:');
-  var isLocalNoServer = (host === 'localhost' || host === '127.0.0.1') &&
-                        (port !== '3000' && port !== '3443');
-  var hasServer = !isFileProtocol && !isLocalNoServer;
-
-  if(hasServer && typeof loginCloud==='function'){
-    loginCloud(u, p).then(function(result){
-      if(result && result.success){
-        setToken(result.token||result.user&&result.user.token||null);
-        if(typeof connectSocket==='function') connectSocket();
-        if(typeof syncFromServer==='function') syncFromServer().then(function(){
-          try{ renderAll(); }catch(e){}
-        });
-      }
-    }).catch(function(){ /* silencieux */ });
-  }
+  var acc = findLocalAccount(loginId, p);
+  if(!acc){ showErr("❌ Identifiants incorrects"); return; }
+  finishLogin(acc);
 }
 
 function _afterLogin(acc, loginBtn){
@@ -6255,11 +6459,11 @@ function renderBonRep(maint){
         '<div class="bon-sigs-title">AUTORISATIONS ET VISAS</div>'+
         '<div class="bon-sigs-grid">'+
           '<div class="bon-sig-box"><div class="bsig-role">Responsable Parc Auto</div><div class="bsig-name">'+(maint.resp1||'_____________________')+'</div><div class="bsig-func">Responsable du parc automobile</div><div class="bon-sig-area"></div></div>'+
-          '<div class="bon-sig-box"><div class="bsig-role">Chargé d\'Operation</div><div class="bsig-name">'+(maint.resp2||'_____________________')+'</div><div class="bsig-func">Chargé des opérations logistiques</div><div class="bon-sig-area"></div></div>'+
+          '<div class="bon-sig-box"><div class="bsig-role">Chargée d\'Opération</div><div class="bsig-name">'+(maint.resp2||'_____________________')+'</div><div class="bsig-func">Chargée des opérations logistiques</div><div class="bon-sig-area"></div></div>'+
           '<div class="bon-sig-box"><div class="bsig-role">Atelier / Prestataire</div><div class="bsig-name">_____________________</div><div class="bsig-func">Responsable atelier / garage</div><div class="bon-sig-area"></div></div>'+
         '</div>'+
       '</div>'+
-      '<div class="bon-conditions"><strong>CONDITIONS D\'EXECUTION :</strong> Les travaux doivent être exécutés conformément aux normes techniques en vigueur. Tout travail supplémentaire non prévu doit faire l\'objet d\'une autorisation préalable. La réception définitive du véhicule sera effectuée après vérification par le Chargé d\'Operation. Toute pièce remplacée doit être présentée au Responsable Parc Auto avant evacuation.</div>'+
+      '<div class="bon-conditions"><strong>CONDITIONS D\'EXECUTION :</strong> Les travaux doivent être exécutés conformément aux normes techniques en vigueur. Tout travail supplémentaire non prévu doit faire l\'objet d\'une autorisation préalable. La réception définitive du véhicule sera effectuée après vérification par la Chargée d\'Opération. Toute pièce remplacée doit être présentée au Responsable Parc Auto avant evacuation.</div>'+
     '</div>'+
     // invoice display
     (maint.photo&&maint.photo.startsWith('data:')?'<div style="margin:0 0 12px;padding:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px"><div style="font-size:8px;text-transform:uppercase;letter-spacing:1.5px;color:#6b7280;font-weight:700;margin-bottom:6px">📎 Justificatif / Facture</div>'+(maint.photo.startsWith('data:image')?'<img src="'+maint.photo+'" style="max-width:100%;max-height:120px;border-radius:5px;border:1px solid #e5e7eb" alt="Facture">':'<a href="'+maint.photo+'" download="facture.pdf" style="display:inline-flex;align-items:center;gap:6px;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:6px;padding:7px 11px;font-size:10px;color:#991B1B;text-decoration:none">📄 Facture PDF — Cliquer pour télécharger</a>')+'</div>':'') +
@@ -8382,7 +8586,7 @@ function updateMaint(id){
 function prefillApprob(){
   var A = (typeof APPROB !== 'undefined') ? APPROB : {
     resp1:{nom:'Responsable Parc',func:'Chargé de la Flotte'},
-    resp2:{nom:'Chargé Opérations',func:'Chargée des Opérations'},
+    resp2:{nom:'Chargée des Opérations',func:'Chargée des Opérations'},
     dg:{nom:'Direction Générale',func:'Directeur Général'}
   };
   const r1=document.getElementById('am-resp1');if(r1&&!r1.value)r1.value=A.resp1.nom;
@@ -11057,7 +11261,8 @@ function getSizeOf(key){
 function formatBytes(bytes){
   if(bytes < 1024) return bytes + ' B';
   if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-  return (bytes/1024/1024).toFixed(2) + ' MB';
+  if(bytes < 1024*1024*1024) return (bytes/1024/1024).toFixed(2) + ' MB';
+  return (bytes/1024/1024/1024).toFixed(2) + ' Go';
 }
 
 function countBase64InArray(arr, fields){
@@ -11075,74 +11280,78 @@ function countBase64InArray(arr, fields){
   return size;
 }
 
+function getPplStorageUsed(cb){
+  var ls = getLocalStorageSize();
+  idbEstimateSize(function(idb){
+    var total = ls + (idb || 0);
+    if(cb) cb(total);
+  });
+}
+
 function refreshStorageStats(){
-  var totalUsed = getLocalStorageSize();
-  var limit = 5 * 1024 * 1024; // ~5MB conservative estimate
-  var pct = Math.min(100, Math.round(totalUsed / limit * 100));
+  var limit = typeof STORAGE_LIMIT_BYTES !== 'undefined' ? STORAGE_LIMIT_BYTES : (1024*1024*1024);
+  function renderStats(totalUsed){
+    var pct = Math.min(100, Math.round(totalUsed / limit * 100));
+    var barColor = pct >= 90 ? '#DC2626' : pct >= 70 ? '#F59E0B' : '#059669';
+    var bar = document.getElementById('storage-bar');
+    var txt = document.getElementById('storage-size-text');
+    if(bar){ bar.style.width = pct + '%'; bar.style.background = barColor; }
+    if(txt){ txt.textContent = formatBytes(totalUsed) + ' / ~1 Go (' + pct + '%)'; txt.style.color = barColor; }
 
-  // Bar color
-  var barColor = pct >= 90 ? '#DC2626' : pct >= 70 ? '#F59E0B' : '#059669';
-  var bar = document.getElementById('storage-bar');
-  var txt = document.getElementById('storage-size-text');
-  if(bar){ bar.style.width = pct + '%'; bar.style.background = barColor; }
-  if(txt){ txt.textContent = formatBytes(totalUsed) + ' / ~5 MB (' + pct + '%)'; txt.style.color = barColor; }
+    var modules = [
+      {label:'Véhicules',   key:K.vehicles,  icon:'🚘'},
+      {label:'Conducteurs', key:K.drivers,   icon:'👤'},
+      {label:'Sorties',     key:K.trips,     icon:'🛣️'},
+      {label:'Missions',    key:K.missions,  icon:'📋'},
+      {label:'Entretiens',  key:K.maint,     icon:'🔧'},
+      {label:'Carburant',   key:K.fuel,      icon:'⛽'},
+      {label:'Documents',   key:K.docs,      icon:'📄'},
+      {label:'Historique',  key:K.logs,      icon:'🕐'},
+      {label:'Comptes',     key:K.accounts,  icon:'👥'},
+    ];
 
-  // Module breakdown
-  var modules = [
-    {label:'Véhicules',   key:K.vehicles,  icon:'🚘'},
-    {label:'Conducteurs', key:K.drivers,   icon:'👤'},
-    {label:'Sorties',     key:K.trips,     icon:'🛣️'},
-    {label:'Missions',    key:K.missions,  icon:'📋'},
-    {label:'Entretiens',  key:K.maint,     icon:'🔧'},
-    {label:'Carburant',   key:K.fuel,      icon:'⛽'},
-    {label:'Documents',   key:K.docs,      icon:'📄'},
-    {label:'Historique',  key:K.logs,      icon:'🕐'},
-    {label:'Comptes',     key:K.accounts,  icon:'👥'},
-  ];
+    var detail = document.getElementById('storage-detail');
+    if(detail){
+      detail.innerHTML = modules.map(function(m){
+        var s = getSizeOf(m.key);
+        if(localStorage.getItem(m.key) === PPL_IDB_MARKER && window._pplIdbCache[m.key]){
+          try{ s = JSON.stringify(window._pplIdbCache[m.key]).length * 2; }catch(e){}
+        }
+        var arr = load(m.key) || [];
+        var count = Array.isArray(arr) ? arr.length : 0;
+        var sColor = s > 50*1024*1024 ? '#DC2626' : s > 10*1024*1024 ? '#F59E0B' : 'var(--t3)';
+        return '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 11px">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center">'+
+            '<span style="font-size:11px;font-weight:600">'+m.icon+' '+m.label+'</span>'+
+            '<span style="font-size:10px;font-family:monospace;color:'+sColor+';font-weight:700">'+formatBytes(s)+'</span>'+
+          '</div>'+
+          '<div style="font-size:9px;color:var(--t3);margin-top:2px">'+count+' enregistrement(s)</div>'+
+        '</div>';
+      }).join('');
+    }
 
-  var detail = document.getElementById('storage-detail');
-  if(detail){
-    detail.innerHTML = modules.map(function(m){
-      var s = getSizeOf(m.key);
-      var arr = load(m.key) || [];
-      var count = Array.isArray(arr) ? arr.length : 0;
-      var sColor = s > 500*1024 ? '#DC2626' : s > 100*1024 ? '#F59E0B' : 'var(--t3)';
-      return '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 11px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:center">'+
-          '<span style="font-size:11px;font-weight:600">'+m.icon+' '+m.label+'</span>'+
-          '<span style="font-size:10px;font-family:monospace;color:'+sColor+';font-weight:700">'+formatBytes(s)+'</span>'+
-        '</div>'+
-        '<div style="font-size:9px;color:var(--t3);margin-top:2px">'+count+' enregistrement(s)</div>'+
-      '</div>';
-    }).join('');
+    var vs = gV()||[];
+    var ei = document.getElementById('photos-size-info');
+    if(ei) ei.textContent = 'Photos véhicules : ' + formatBytes(countBase64InArray(vs, ['photo','docs']));
+
+    var fs = gF()||[];
+    var ef = document.getElementById('fuel-photos-size-info');
+    if(ef) ef.textContent = 'Reçus carburant : ' + formatBytes(countBase64InArray(fs, ['recu','photo']));
+
+    var ms = gE()||[];
+    var em = document.getElementById('maint-photos-size-info');
+    if(em) em.textContent = 'Scans entretiens : ' + formatBytes(countBase64InArray(ms, ['photo','factureB64']));
+
+    var logs = gL()||[];
+    var el = document.getElementById('logs-size-info');
+    if(el) el.textContent = 'Historique : ' + formatBytes(getSizeOf(K.logs)) + ' (' + logs.length + ' entrées)';
+
+    var card = document.getElementById('storage-manager-card');
+    if(card){
+      card.style.borderLeftColor = pct >= 80 ? '#DC2626' : pct >= 60 ? '#F59E0B' : 'var(--gold)';
+    }
   }
-
-  // Photo sizes
-  var vs = gV()||[];
-  var photoSizeV = countBase64InArray(vs, ['photo','docs']);
-  var ei = document.getElementById('photos-size-info');
-  if(ei) ei.textContent = 'Photos véhicules : ' + formatBytes(photoSizeV);
-
-  var fs = gF()||[];
-  var photoSizeF = countBase64InArray(fs, ['recu','photo']);
-  var ef = document.getElementById('fuel-photos-size-info');
-  if(ef) ef.textContent = 'Reçus carburant : ' + formatBytes(photoSizeF);
-
-  var ms = gE()||[];
-  var photoSizeM = countBase64InArray(ms, ['photo','factureB64']);
-  var em = document.getElementById('maint-photos-size-info');
-  if(em) em.textContent = 'Scans entretiens : ' + formatBytes(photoSizeM);
-
-  var logs = gL()||[];
-  var logsSize = getSizeOf(K.logs);
-  var el = document.getElementById('logs-size-info');
-  if(el) el.textContent = 'Historique : ' + formatBytes(logsSize) + ' (' + logs.length + ' entrées)';
-
-  // Show/hide storage card warning
-  var card = document.getElementById('storage-manager-card');
-  if(card){
-    card.style.borderLeftColor = pct >= 80 ? '#DC2626' : pct >= 60 ? '#F59E0B' : 'var(--gold)';
-  }
+  getPplStorageUsed(renderStats);
 }
 
 function purgeVehiclePhotos(){
@@ -12534,17 +12743,22 @@ if(!load(K_MOTO_CONTRACTS)) save(K_MOTO_CONTRACTS,[]);
 if(!load(K_MOTO_PAYMENTS))  save(K_MOTO_PAYMENTS,[]);
 
 // ═══ INIT ═══
-initData();try{initPrest();}catch(e){} try{initLP();}catch(e){} initChips();startAutoSave();checkAutoSave();updateBackupStats();
+function _pplBoot(){
+  initData();try{initPrest();}catch(e){} try{initLP();}catch(e){} initChips();startAutoSave();checkAutoSave();updateBackupStats();
+}
+if(typeof initPplIdbCache === 'function') initPplIdbCache(_pplBoot);
+else _pplBoot();
 if (typeof startPreLoginCloudSync === 'function') startPreLoginCloudSync();
 setTimeout(function(){try{_initVehicleButtons();}catch(e){}},100);
 // Storage warning check at startup
 setTimeout(function(){
   try{
-    var used = getLocalStorageSize();
-    var pct = Math.round(used / (5*1024*1024) * 100);
-    if(pct >= 80){
-      showT('⚠️ Stockage à '+pct+'% — Allez dans Comptes > Gestionnaire de stockage','w');
-    }
+    getPplStorageUsed(function(used){
+      var pct = Math.round(used / (typeof STORAGE_LIMIT_BYTES!=='undefined'?STORAGE_LIMIT_BYTES:1024*1024*1024) * 100);
+      if(pct >= 80){
+        showT('⚠️ Stockage à '+pct+'% — Allez dans Comptes > Gestionnaire de stockage','w');
+      }
+    });
   }catch(e){}
 }, 2000);
 // ── FIX 13 : Détail contrat moto + Import PDF — VERSION CORRIGÉE ──
@@ -20762,44 +20976,16 @@ function injectModuleManagerPage() {
   }
 })();
 
-// BUG FIX 4: Quota stockage localStorage — proposer purge automatique
+// BUG FIX 4: Quota stockage — purge médias ou bascule IndexedDB (1 Go)
 (function() {
   var _origSave = window.save;
   if (typeof _origSave === 'function') {
     window.save = function(k, v) {
-      try {
-        localStorage.setItem(k, JSON.stringify(v));
-        if (typeof pushToServer === 'function' && typeof _socket !== 'undefined' && _socket && _socket.connected) {
-          try { pushToServer(k, v); } catch(e) {}
-        }
-      } catch(e) {
-        if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
-          // Proposer purge automatique des médias (photos base64 = principale source)
-          if (confirm('⚠️ Stockage plein !\n\nVoulez-vous purger automatiquement les photos et médias pour libérer de l\'espace ?\n\nLes données textuelles seront conservées.')) {
-            try {
-              // Purger les photos des véhicules
-              var vs = JSON.parse(localStorage.getItem('p5_v') || '[]');
-              vs.forEach(function(v) { if(v.photo && v.photo.length > 100) v.photo = ''; if(v.docs) v.docs = []; });
-              localStorage.setItem('p5_v', JSON.stringify(vs));
-              // Purger les photos conducteurs
-              var ds = JSON.parse(localStorage.getItem('p5_d') || '[]');
-              ds.forEach(function(d) { if(d.photo && d.photo.length > 100) d.photo = ''; });
-              localStorage.setItem('p5_d', JSON.stringify(ds));
-              // Purger les reçus carburant
-              var fs = JSON.parse(localStorage.getItem('p5_f') || '[]');
-              fs.forEach(function(f) { if(f.photo) f.photo = ''; });
-              localStorage.setItem('p5_f', JSON.stringify(fs));
-              // Réessayer la sauvegarde
-              localStorage.setItem(k, JSON.stringify(v));
-              if (typeof showT === 'function') showT('✅ Médias purgés, espace libéré !', 's');
-            } catch(e2) {
-              if (typeof showT === 'function') showT('❌ Stockage plein même après purge. Exportez vos données.', 'w');
-            }
-          } else {
-            if (typeof showT === 'function') showT('⚠️ Sauvegarde impossible — stockage plein', 'w');
-          }
-        }
+      if (typeof window._pplSaveCore === 'function') {
+        window._pplSaveCore(k, v);
+        return;
       }
+      _origSave(k, v);
     };
   }
 })();
@@ -22818,7 +23004,8 @@ window.confirmerAffectation = function(){
       dest:      demande.destination,
       motif:     '[DC] '+demande.motif+' — Réf: '+demande.ref,
       passagers: demande.passagers,
-      status:    'out',
+      status:    'open',
+      kmOut:     v ? v.km : 0,
       km:        v ? v.km : 0,
       notes:     'Demande de course: '+demande.ref+(notesAff?'\n'+notesAff:''),
       demandeRef: demande.ref,
@@ -22826,10 +23013,10 @@ window.confirmerAffectation = function(){
     };
     trips.push(newTrip);
     save(K.trips, trips);
-    // Marquer véhicule comme indisponible
+    // Marquer véhicule en sortie (parc)
     var vehicles = gV();
     var vIdx = vehicles.findIndex(function(vv){ return vv.id===vehicleId; });
-    if(vIdx>=0){ vehicles[vIdx].status='unavailable'; save(K.vehicles, vehicles); }
+    if(vIdx>=0){ vehicles[vIdx].status='out'; save(K.vehicles, vehicles); }
   }
 
   if(typeof addLog==='function') addLog('demande','Affectée: '+demande.ref+' → '+(v?v.plate:'')+(d?' / '+d.name:''));
@@ -22841,6 +23028,70 @@ window.confirmerAffectation = function(){
 // ══════════════════════════════════════════════════════════════════════
 // VUE DÉTAIL D'UNE DEMANDE
 // ══════════════════════════════════════════════════════════════════════
+function _demandeDecisionSection(d, fmtD2){
+  if(d.statut === 'rejete'){
+    return '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 14px;margin-bottom:12px">'+
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:8px">❌ Motif de rejet</div>'+
+        '<div style="font-size:12px;font-weight:600">Rejetée'+(d.approbateurNom?' par '+d.approbateurNom:'')+'</div>'+
+        (d.dateApprobation ? '<div style="font-size:10px;color:var(--t3);margin-top:3px">Le '+fmtD2(d.dateApprobation)+'</div>' : '')+
+        (d.motifRejet ? '<div style="margin-top:8px;font-size:11px;color:#DC2626"><strong>Motif :</strong> '+d.motifRejet+'</div>' : '')+
+    '</div>';
+  }
+  if(['approuve','en_cours','termine'].indexOf(d.statut) >= 0 && d.approbateurNom){
+    return '<div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;padding:12px 14px;margin-bottom:12px">'+
+      '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:8px">✅ Décision d\'approbation</div>'+
+      '<div style="font-size:12px;font-weight:600">Approuvée par '+d.approbateurNom+'</div>'+
+      (d.dateApprobation ? '<div style="font-size:10px;color:var(--t3);margin-top:3px">Le '+fmtD2(d.dateApprobation)+'</div>' : '')+
+    '</div>';
+  }
+  return '';
+}
+
+window.cloturerDemande = function(id){
+  if(typeof confirm2 !== 'function') return;
+  confirm2('Clôturer cette course ?', 'Le véhicule sera remis disponible dans le parc.', function(){
+    var demandes = gDemandes();
+    var idx = demandes.findIndex(function(d){ return d.id === id; });
+    if(idx < 0) return;
+    var demande = demandes[idx];
+    demandes[idx].statut = 'termine';
+    demandes[idx].dateCloture = new Date().toISOString();
+    demandes[idx].updatedAt = new Date().toISOString();
+    saveDemandes(demandes);
+
+    if(typeof gT === 'function' && typeof save === 'function' && typeof K !== 'undefined'){
+      var trips = gT();
+      var tIdx = trips.findIndex(function(t){
+        return t.demandeId === id || (demande.ref && t.demandeRef === demande.ref);
+      });
+      if(tIdx >= 0){
+        trips[tIdx].status = 'done';
+        if(!trips[tIdx].dateReturn){
+          trips[tIdx].dateReturn = (typeof nowDT === 'function') ? nowDT() : new Date().toISOString();
+        }
+        save(K.trips, trips);
+      }
+      var vid = (tIdx >= 0 ? trips[tIdx].vehicleId : null) || demande.vehicleId;
+      if(vid && typeof gV === 'function'){
+        var vs = gV();
+        var vIdx = vs.findIndex(function(v){ return v.id === vid; });
+        if(vIdx >= 0){
+          if(vs[vIdx].status === 'out' || vs[vIdx].status === 'unavailable'){
+            vs[vIdx].status = 'available';
+          }
+          save(K.vehicles, vs);
+        }
+      }
+    }
+
+    if(typeof addLog === 'function') addLog('demande', 'Course clôturée: '+demande.ref);
+    if(typeof closeM === 'function') closeM('detail-demande');
+    if(typeof renderDemandesPage === 'function') renderDemandesPage();
+    if(typeof renderAll === 'function') setTimeout(function(){ try{ renderAll(); }catch(e){} }, 50);
+    if(typeof showT === 'function') showT('🏁 Course clôturée — véhicule disponible','s');
+  });
+};
+
 window.voirDetailDemande = function(id){
   var d = gDemandes().find(function(x){ return x.id===id; });
   if(!d) return;
@@ -22870,15 +23121,7 @@ window.voirDetailDemande = function(id){
       _detailField('🚗 Véhicule souhaité', d.vehiculePref||'Indifférent')+
     '</div>'+
     (d.notes ? '<div style="background:#F9F5EE;border-left:3px solid var(--gold);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:11px"><strong>Notes :</strong> '+d.notes+'</div>' : '')+
-    // Section approbation
-    (d.approbateurNom ?
-      '<div style="background:'+(d.statut==='approuve'?'#F0FDF4':'#FEF2F2')+';border:1px solid '+(d.statut==='approuve'?'#86EFAC':'#FECACA')+';border-radius:8px;padding:12px 14px;margin-bottom:12px">'+
-        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:8px">'+(d.statut==='approuve'?'✅ Décision d\'approbation':'❌ Motif de rejet')+'</div>'+
-        '<div style="font-size:12px;font-weight:600">'+(d.statut==='approuve'?'Approuvée':'Rejetée')+' par '+d.approbateurNom+'</div>'+
-        '<div style="font-size:10px;color:var(--t3);margin-top:3px">Le '+fmtD2(d.dateApprobation)+'</div>'+
-        (d.motifRejet ? '<div style="margin-top:8px;font-size:11px;color:#DC2626"><strong>Motif :</strong> '+d.motifRejet+'</div>' : '')+
-      '</div>'
-    : '')+
+    _demandeDecisionSection(d, fmtD2)+
     // Section affectation
     (d.vehiculeAffecte ?
       '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px">'+
@@ -22890,6 +23133,15 @@ window.voirDetailDemande = function(id){
         (d.notesAffectation ? '<div style="font-size:11px;margin-top:8px;color:var(--t2)"><strong>Notes :</strong> '+d.notesAffectation+'</div>' : '')+
       '</div>'
     : '');
+
+  var mf = document.getElementById('dem-detail-footer');
+  if(mf){
+    var cu = (typeof CU !== 'undefined') ? CU : null;
+    var canCloture = (d.statut === 'en_cours' || (d.statut === 'approuve' && d.vehiculeAffecte)) && d.statut !== 'termine';
+    var isLog = cu && (cu.role === 'admin' || cu.role === 'manager');
+    mf.innerHTML = '<button class="btn bg" onclick="closeM(\'detail-demande\')">Fermer</button>' +
+      (canCloture && isLog ? '<button class="btn bsuc" onclick="cloturerDemande('+d.id+')">🏁 Clôturer la course</button>' : '');
+  }
 
   mo.classList.add('open');
 };
@@ -23030,7 +23282,7 @@ function injectDemandesPage(){
       '<div class="mh"><div class="mtitle">🚗 Détail de la demande</div>'+
         '<button class="mx" onclick="closeM(\'detail-demande\')">✕</button></div>'+
       '<div class="mb" style="overflow-y:auto;flex:1" id="dem-detail-body"></div>'+
-      '<div class="mf"><button class="btn bg" onclick="closeM(\'detail-demande\')">Fermer</button></div>'+
+      '<div class="mf" id="dem-detail-footer"><button class="btn bg" onclick="closeM(\'detail-demande\')">Fermer</button></div>'+
     '</div>';
   document.body.appendChild(moDetail);
 }

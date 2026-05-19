@@ -10,8 +10,15 @@ services:
         generateValue: true
       - key: NODE_ENV
         value: production
-      # À renseigner dans le tableau de bord Render : Environment → MONGODB_URI (secret Atlas)
-      - key: MONGODB_URI
-        sync: false
       - key: MONGODB_DB_NAME
         value: flotte_ppl
+      # Renseigner dans Render → Environment (recommandé : 3 variables, mot de passe en clair OK)
+      - key: MONGODB_USER
+        sync: false
+      - key: MONGODB_PASSWORD
+        sync: false
+      - key: MONGODB_HOST
+        sync: false
+      # Alternative : une seule URI (sync: false — à coller manuellement)
+      - key: MONGODB_URI
+        sync: false

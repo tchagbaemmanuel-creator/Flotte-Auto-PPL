@@ -43,10 +43,10 @@ Commit → **"Commit changes"**
    - **Build Command :** `npm install`
    - **Start Command :** `node server.js`
    - **Plan :** Free
-5. Section **"Environment Variables"** :
+5. Section **"Environment Variables"** (voir aussi `MONGODB_EN_LIGNE.md`) :
    - `JWT_SECRET` : une phrase longue et secrète (Render peut aussi en générer une via `render.yaml`).
-   - **`MONGODB_URI`** (obligatoire pour garder les données) : copier l’URI depuis **Atlas → Connect → Drivers** (Node.js). Remplacer `<password>` par le mot de passe ; s’il contient `@`, `/`, etc., encoder le mot de passe seul (PowerShell : `node -e "console.log(encodeURIComponent('votre_mot_de_passe'))"`). L’URI doit contenir le nom de base, par ex. `...mongodb.net/flotte_ppl?retryWrites=true&w=majority`.
-   - **`MONGODB_DB_NAME`** (optionnel) : `flotte_ppl` si tu veux forcer le nom de base (sinon celui dans l’URI suffit).
+   - **Mongo (recommandé)** : `MONGODB_USER`, `MONGODB_PASSWORD`, `MONGODB_HOST` (host Atlas ex. `cluster0.xxxxx.mongodb.net`), `MONGODB_DB_NAME` = `flotte_ppl`.
+   - **Ou** une seule **`MONGODB_URI`** (mot de passe spécial → encoder avec `encodeURIComponent`).
 6. Dans **MongoDB Atlas → Network Access** : autoriser **`0.0.0.0/0`** (ou les IP de Render si tu préfères restreindre), sinon la connexion depuis Render échoue.
 7. Cliquer **"Create Web Service"**
 
@@ -78,5 +78,5 @@ La première visite après une pause prend ~30 secondes pour redémarrer.
 
 - **Logs en temps réel** : dans Render → ton service → onglet "Logs"
 - **Erreur 503** : le service redémarre, attendre 30s
-- **Données / MongoDB** : sans `MONGODB_URI`, le disque Render est **éphémère** (perte au redéploiement). Avec `MONGODB_URI`, le serveur lit/écrit la collection **`app_state`** (document `_id: "main"`). Vérifier les logs `[MONGO] Connecté` ou les erreurs réseau / mot de passe.
-- **Santé** : `GET https://ton-service.onrender.com/api/status` affiche `"mongo": true` si Atlas est connecté.
+- **Données / MongoDB** : sans variables Mongo, le disque Render est **éphémère**. Avec Mongo connecté : collections **`kv_store`** + **`media`** (GridFS) + **`users`**. Logs : `[MONGO] Connecté — base « flotte_ppl »`.
+- **Santé** : `GET https://ton-service.onrender.com/api/status` → `"mongo": true`, `"mongoMode": "kv_store+gridfs"`.

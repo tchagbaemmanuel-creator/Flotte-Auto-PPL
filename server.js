@@ -13,7 +13,7 @@ const jwt        = require('jsonwebtoken');
 const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
-const { MongoClient } = require('mongodb');
+const db         = require('./lib/database');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -27,34 +27,11 @@ function normalizeEnvString(v) {
   return s;
 }
 
-/** Construit une URI `mongodb+srv` avec identifiants encodés (évite les erreurs @ < > dans une seule chaîne). */
-function buildMongoUriFromParts() {
-  const user = normalizeEnvString(process.env.MONGODB_USER || process.env.MONGO_USER);
-  const host = normalizeEnvString(process.env.MONGODB_HOST || process.env.MONGO_HOST);
-  const passRaw = process.env.MONGODB_PASSWORD ?? process.env.MONGO_PASSWORD;
-  if (passRaw == null || user === '' || host === '') return '';
-  const pass = String(passRaw).replace(/\r/g, '');
-  if (pass === '') return '';
-  const dbName = ((process.env.MONGODB_DB_NAME || 'flotte_ppl').trim().replace(/^\/+|\/+$/g, '')) || 'flotte_ppl';
-  return `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}/${dbName}?retryWrites=true&w=majority`;
-}
-
-/** URI finale + origine (`split` = variables séparées, prioritaire sur une URI collée). */
-function resolveMongoUriAndSource() {
-  const fromParts = buildMongoUriFromParts();
-  if (fromParts) return { uri: fromParts, source: 'split' };
-  const keys = ['MONGODB_URI', 'MONGO_URI', 'DATABASE_URL'];
-  for (const k of keys) {
-    const u = normalizeEnvString(process.env[k]);
-    if (u.startsWith('mongodb://') || u.startsWith('mongodb+srv://')) return { uri: u, source: 'uri' };
-  }
-  return { uri: '', source: 'none' };
-}
-
 // ─── CONFIG ───────────────────────────────────────────────────
 const PORT          = process.env.PORT || 3000;
 const JWT_SECRET    = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
-const { uri: MONGODB_URI, source: MONGO_URI_SOURCE } = resolveMongoUriAndSource();
+const { uri: MONGODB_URI, source: MONGO_URI_SOURCE } = db.resolveUri(process.env);
+db.setUriSource(MONGO_URI_SOURCE);
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'flotte_ppl';
 /** Render injecte RENDER=true ; le disque du conteneur n’est pas persistant entre redéploiements. */
 const IS_RENDER     = process.env.RENDER === 'true';
@@ -68,11 +45,12 @@ const server = http.createServer(app);
 const io     = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  maxHttpBufferSize: 1e9 // 1 Go — sync photos / exports
 });
 
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '1gb' }));
 
 // Créer le dossier data si absent
 if (!fs.existsSync(path.join(__dirname, 'data'))) {
@@ -89,87 +67,16 @@ function loadData() {
   return {};
 }
 
-let mongoClient     = null;
-let mongoCollection = null;
-let mongoUsersCollection = null;
-/** Dernière erreur de connexion Mongo (message seul, jamais l’URI). */
-let mongoConnectError = null;
-
-async function saveDataMongo(data) {
-  if (!mongoCollection) return;
-  await mongoCollection.replaceOne(
-    { _id: 'main' },
-    { _id: 'main', data, updatedAt: new Date() },
-    { upsert: true }
-  );
-  await persistUsersToMongoTable(data);
+function isMongoConnected() {
+  return db.getState().connected;
 }
 
-/** Identifiant stable pour un document dans la collection `users` (id métier ou username). */
-function userStableId(u) {
-  if (!u || typeof u !== 'object') return null;
-  if (u.id != null && String(u.id).trim() !== '') return String(u.id);
-  if (u.username != null && String(u.username).trim() !== '') return String(u.username);
-  return null;
-}
-
-/** Lit tous les comptes depuis la collection Mongo `users`. */
-async function loadUsersFromMongoTable() {
-  if (!mongoUsersCollection) return [];
-  const docs = await mongoUsersCollection.find({}).toArray();
-  return docs.map((d) => {
-    const { _id, ...rest } = d;
-    return rest;
-  });
-}
-
-/** Enregistre chaque compte de p5_ac / p5_accounts comme un document dans `users` (_id = id ou username). Retire les documents orphelins. */
-async function persistUsersToMongoTable(data) {
-  if (!mongoUsersCollection || !data) return;
-  const list = data.p5_ac || data.p5_accounts;
-  if (!Array.isArray(list) || list.length === 0) return;
-  const ops = [];
-  const ids = [];
-  for (const u of list) {
-    const sid = userStableId(u);
-    if (!sid) continue;
-    ids.push(sid);
-    const doc = { ...u, _id: sid };
-    ops.push({ replaceOne: { filter: { _id: sid }, replacement: doc, upsert: true } });
-  }
-  if (!ops.length) return;
-  try {
-    await mongoUsersCollection.bulkWrite(ops, { ordered: false });
-    const unique = [...new Set(ids)];
-    if (unique.length) {
-      const del = await mongoUsersCollection.deleteMany({ _id: { $nin: unique } });
-      if (del.deletedCount > 0) {
-        console.log(`[MONGO] Collection users : ${del.deletedCount} compte(s) supprimé(s) (plus dans p5_ac / p5_accounts).`);
-      }
-    }
-  } catch (e) {
-    console.error('[MONGO] Écriture collection users:', e.message);
-  }
-}
-
-/** Si la mémoire n’a pas de comptes : les charger depuis `users`. Sinon : aligner `users` sur la mémoire. */
-async function syncUsersCollectionWithDb() {
-  if (!mongoUsersCollection) return;
-  const accMain = DB.p5_ac || DB.p5_accounts || [];
-  if (accMain.length) {
-    await persistUsersToMongoTable(DB);
-    console.log(`[MONGO] Collection users : ${accMain.length} document(s) synchronisé(s).`);
-    return;
-  }
-  const fromTable = await loadUsersFromMongoTable();
-  if (fromTable.length) {
-    DB.p5_ac = fromTable;
-    console.log(`[MONGO] ${fromTable.length} compte(s) chargé(s) depuis la collection users.`);
-  }
+function mongoConnectError() {
+  return db.getState().error;
 }
 
 function saveData(data) {
-  const persistFile = !(mongoCollection && IS_RENDER);
+  const persistFile = !(isMongoConnected() && IS_RENDER);
   if (persistFile) {
     try {
       const tmp = DATA_FILE + '.tmp';
@@ -177,7 +84,17 @@ function saveData(data) {
       fs.renameSync(tmp, DATA_FILE);
     } catch (e) { console.error('[DATA] Erreur écriture:', e.message); }
   }
-  saveDataMongo(data).catch((e) => console.error('[MONGO] Erreur écriture:', e.message));
+  if (isMongoConnected()) {
+    db.saveAll(data).catch((e) => console.error('[MONGO] Erreur écriture:', e.message));
+  }
+}
+
+function persistKeyToMongo(key) {
+  if (!isMongoConnected() || !key || key.startsWith('_ppl')) return;
+  db.saveKey(key, DB[key]).catch((e) => console.error('[MONGO] Clé ' + key + ':', e.message));
+  if (key === 'p5_ac' || key === 'p5_accounts') {
+    db.persistUsersFromData(DB).catch((e) => console.error('[MONGO] users:', e.message));
+  }
 }
 
 /** Fusionne les demandes d'inscription (évite d'écraser la file serveur avec le localStorage incomplet du demandeur). */
@@ -212,65 +129,43 @@ function loadUsers() {
 // Sur Render avec Atlas : ne pas partir d’un JSON éphémère sur disque ; Atlas est la source de vérité.
 let DB = IS_RENDER && MONGODB_URI ? {} : loadData();
 
-/** Connexion Atlas et chargement du document principal si présent. */
+/** Connexion Atlas — kv_store (par clé) + GridFS médias ; migration auto depuis app_state. */
 async function initMongo() {
-  mongoConnectError = null;
   if (IS_RENDER && !MONGODB_URI) {
     console.warn('[RENDER] MongoDB non configuré : ajoutez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (recommandé), ou MONGODB_URI complète (Atlas → Connect).');
   }
-  if (!MONGODB_URI) {
-    console.log('[MONGO] URI absente — variables séparées MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST ; ou MONGODB_URI / MONGO_URI / DATABASE_URL.');
-    return;
-  }
+  if (!MONGODB_URI) return;
   if (MONGO_URI_SOURCE === 'split') {
     console.log('[MONGO] URI construite depuis USER + PASSWORD + HOST (encodage géré par le serveur).');
   }
-  try {
-    const clientOpts = {
-      serverSelectionTimeoutMS: 20_000,
-      connectTimeoutMS: 20_000
-    };
-    if (IS_RENDER) clientOpts.family = 4;
-    mongoClient = new MongoClient(MONGODB_URI, clientOpts);
-    await mongoClient.connect();
-    const mdb = mongoClient.db(MONGODB_DB_NAME);
-    mongoCollection = mdb.collection('app_state');
-    mongoUsersCollection = mdb.collection('users');
-    const doc = await mongoCollection.findOne({ _id: 'main' });
-    const fromMongo = doc && doc.data && typeof doc.data === 'object' ? doc.data : null;
-    const keysMongo = fromMongo ? Object.keys(fromMongo).length : 0;
-    const keysFile  = Object.keys(DB).length;
-    if (keysMongo > 0) {
-      DB = fromMongo;
-      console.log(`[MONGO] Connecté — ${keysMongo} clé(s) chargée(s) depuis Atlas (${MONGODB_DB_NAME}.app_state).`);
-    } else if (keysFile > 0) {
-      await saveDataMongo(DB);
-      console.log(`[MONGO] Connecté — données locales copiées vers Atlas (${keysFile} clé(s)).`);
-    } else {
-      console.log(`[MONGO] Connecté — base vide (prêt à enregistrer dans ${MONGODB_DB_NAME}.app_state).`);
+  const ok = await db.connect(MONGODB_URI, MONGODB_DB_NAME, { preferIpv4: IS_RENDER });
+  if (!ok) {
+    const err = mongoConnectError() || '';
+    if (/EBADNAME|querySrv/i.test(err)) {
+      console.error('[MONGO] Cause fréquente : mot de passe avec @ < > — utilisez MONGODB_USER + PASSWORD + HOST séparés.');
     }
-    await syncUsersCollectionWithDb();
-    mongoConnectError = null;
-  } catch (e) {
-    mongoConnectError = e.message || String(e);
-    console.error('[MONGO] Connexion impossible:', mongoConnectError);
-    if (/EBADNAME|querySrv/i.test(mongoConnectError)) {
-      console.error('[MONGO] Cause fréquente : le mot de passe contient @ < > : / ? # sans encodage — l’URI est alors mal découpée (l’hôte doit être *.mongodb.net).');
-      console.error('[MONGO] Sur Render, préférez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (le serveur encode le mot de passe).');
+    if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(err)) {
+      console.error('[MONGO] Erreur SSL/TLS : identifiants ou cluster incorrect.');
     }
-    if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(mongoConnectError)) {
-      console.error('[MONGO] Erreur SSL/TLS : souvent identifiants incorrects ou URI mal formée. Utilisez USER + PASSWORD + HOST séparés, ou régénérez le mot de passe Atlas.');
+    if (IS_RENDER) {
+      console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements.');
     }
-    if (IS_RENDER && MONGODB_URI) {
-      console.error('[RENDER] Sans MongoDB, les données ne survivront pas aux redéploiements. Vérifiez MONGODB_URI et Network Access Atlas (0.0.0.0/0 ou IP Render).');
-    }
-    mongoCollection = null;
-    mongoUsersCollection = null;
-    if (mongoClient) {
-      try { await mongoClient.close(); } catch (_) {}
-    }
-    mongoClient = null;
+    return;
   }
+  const legacyCol = db.getState().client.db(MONGODB_DB_NAME).collection('app_state');
+  const fromMongo = await db.loadAllKeys(legacyCol);
+  const keysMongo = Object.keys(fromMongo).length;
+  const keysFile = Object.keys(DB).length;
+  if (keysMongo > 0) {
+    DB = fromMongo;
+    console.log(`[MONGO] ${keysMongo} clé(s) en mémoire (kv_store + GridFS).`);
+  } else if (keysFile > 0) {
+    await db.saveAll(DB);
+    console.log(`[MONGO] Données locales copiées vers kv_store (${keysFile} clé(s)).`);
+  } else {
+    console.log('[MONGO] Base vide — prêt à enregistrer.');
+  }
+  await db.syncUsersWithData(DB);
 }
 
 // Auto-sauvegarde toutes les 30 secondes
@@ -280,13 +175,11 @@ setInterval(() => saveData(DB), 30000);
 async function shutdown(signal) {
   try {
     saveData(DB);
-    if (mongoCollection) await saveDataMongo(DB);
+    if (isMongoConnected()) await db.saveAll(DB);
   } catch (e) {
     console.error('[SHUTDOWN]', e.message);
   }
-  if (mongoClient) {
-    try { await mongoClient.close(); } catch (_) {}
-  }
+  await db.disconnect();
   if (signal) console.log('\n✅ Données sauvegardées. Arrêt.');
   process.exit(0);
 }
@@ -333,9 +226,9 @@ app.post('/api/auth/login', async (req, res) => {
   if (!username || !password) return res.status(400).json({ error: 'Champs manquants' });
 
   let users = loadUsers();
-  if (mongoUsersCollection) {
+  if (isMongoConnected()) {
     try {
-      const fromMongo = await loadUsersFromMongoTable();
+      const fromMongo = await db.loadUsersTable();
       if (fromMongo.length) users = fromMongo;
     } catch (e) {
       console.error('[AUTH] Lecture collection users:', e.message);
@@ -344,7 +237,12 @@ app.post('/api/auth/login', async (req, res) => {
   const dbAccounts = DB['p5_ac'] || DB['p5_accounts'] || [];
   if (dbAccounts.length) users = dbAccounts;
 
-  const user = users.find(u => u.username === username && u.password === password && u.active !== false);
+  const uname = String(username).trim().toLowerCase();
+  const user = users.find(u =>
+    u.username && String(u.username).trim().toLowerCase() === uname &&
+    u.password === password &&
+    u.active !== false
+  );
   if (!user) {
     console.log(`[AUTH] Échec login: ${username} depuis ${getClientIP(req)}`);
     return res.status(401).json({ error: 'Identifiants incorrects' });
@@ -395,11 +293,30 @@ app.post('/api/data/:key', (req, res) => {
   }
 
   io.emit('data-update', { key, value: DB[key], changedBy: user });
+  persistKeyToMongo(key);
   res.json({ ok: true });
 });
 
+// ── MÉDIAS GridFS (photos, scans) ──
+app.get('/api/media/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!id || !/^[a-f0-9]{24}$/i.test(id)) return res.status(400).json({ error: 'ID invalide' });
+  const stream = db.openMediaDownloadStream(id);
+  if (!stream) return res.status(404).json({ error: 'Fichier introuvable' });
+  try {
+    const meta = await db.getMediaMetadata(id);
+    if (meta?.metadata?.mime) res.setHeader('Content-Type', meta.metadata.mime);
+    else if (meta?.contentType) res.setHeader('Content-Type', meta.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    stream.on('error', () => { if (!res.headersSent) res.status(500).end(); });
+    stream.pipe(res);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
 // ── STATUT serveur ──
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
   const connected = [...io.sockets.sockets.values()].length;
   const envKeysTried = ['MONGODB_URI', 'MONGO_URI', 'DATABASE_URL'];
   const mongoEnvHints = Object.fromEntries(
@@ -412,29 +329,38 @@ app.get('/api/status', (req, res) => {
   let hint = null;
   if (!MONGODB_URI) {
     hint = 'Render → Environment : ajoutez MONGODB_USER, MONGODB_PASSWORD, MONGODB_HOST (recommandé) ou une MONGODB_URI valide, puis redéployez.';
-  } else if (!mongoCollection && mongoConnectError) {
-    if (/EBADNAME|querySrv/i.test(mongoConnectError)) {
+  }
+  const mErr = mongoConnectError();
+  if (!isMongoConnected() && mErr) {
+    if (/EBADNAME|querySrv/i.test(mErr)) {
       hint = 'URI invalide : utilisez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST pour éviter les caractères spéciaux dans une seule chaîne.';
-    } else if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(mongoConnectError)) {
+    } else if (/SSL alert|tlsv1 alert|0A000438|ssl3_read_bytes/i.test(mErr)) {
       hint = 'Erreur SSL : identifiants ou cluster incorrect. Définissez MONGODB_USER + MONGODB_PASSWORD + MONGODB_HOST (mot de passe brut OK). Vérifiez Network Access Atlas (0.0.0.0/0).';
     } else {
       hint = 'Vérifiez mot de passe, Network Access Atlas 0.0.0.0/0, et le nom de base.';
     }
   }
 
+  let mongoStorage = null;
+  if (isMongoConnected()) {
+    try { mongoStorage = await db.getStorageStats(); } catch (_) {}
+  }
+
   res.json({
     status: 'online',
-    version: 'FlottePPL v20',
+    version: 'FlottePPL v30',
     connectedUsers: connected,
     dataKeys: Object.keys(DB).length,
     uptime: Math.floor(process.uptime()) + 's',
-    mongo: !!mongoCollection,
+    mongo: isMongoConnected(),
+    mongoMode: 'kv_store+gridfs',
+    mongoStorage,
     render: IS_RENDER,
-    mongoUsersTable: !!mongoUsersCollection,
+    mongoUsersTable: isMongoConnected(),
     mongoUriSource: MONGO_URI_SOURCE,
     mongoUriResolved: !!MONGODB_URI,
     mongoEnvPresent: mongoEnvHints,
-    mongoConnectError: MONGODB_URI && !mongoCollection ? mongoConnectError : null,
+    mongoConnectError: MONGODB_URI && !isMongoConnected() ? mErr : null,
     hint
   });
 });
@@ -472,7 +398,16 @@ io.on('connection', (socket) => {
     }
     // Sauvegarde différée (évite les écritures trop fréquentes)
     clearTimeout(socket._saveTimer);
-    socket._saveTimer = setTimeout(() => saveData(DB), 2000);
+    socket._saveTimer = setTimeout(() => {
+      if (!(isMongoConnected() && IS_RENDER)) {
+        try {
+          const tmp = DATA_FILE + '.tmp';
+          fs.writeFileSync(tmp, JSON.stringify(DB, null, 2), 'utf8');
+          fs.renameSync(tmp, DATA_FILE);
+        } catch (e) { console.error('[DATA] Erreur écriture:', e.message); }
+      }
+      if (isMongoConnected()) persistKeyToMongo(key);
+    }, 2000);
   });
 
   // ── Sync complète (admin) ──
@@ -510,8 +445,8 @@ io.on('connection', (socket) => {
       }
       if (localIP !== 'localhost') break;
     }
-    const persist = mongoCollection
-      ? 'MongoDB Atlas (connecté)'
+    const persist = isMongoConnected()
+      ? 'MongoDB Atlas — kv_store + GridFS (connecté)'
       : MONGODB_URI
         ? 'MongoDB : échec de connexion (voir messages [MONGO] ci-dessus)'
         : 'fichiers JSON uniquement (data/)';

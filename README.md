@@ -25,12 +25,15 @@ Ouvrir `http://localhost:3000` (copier `.env.example` vers `.env` pour `JWT_SECR
 
 1. [render.com](https://render.com) → **New Web Service** → connecter ce dépôt.
 2. **Build :** `npm install` — **Start :** `node server.js`
-3. Variables d’environnement :
-   - **`JWT_SECRET`** : chaîne longue et secrète
-   - **`MONGODB_URI`** : chaîne Atlas (mot de passe encodé si caractères spéciaux)
-   - **`MONGODB_DB_NAME`** : `flotte_ppl` (optionnel si déjà dans l’URI)
+3. Variables d’environnement (détail : **`MONGODB_EN_LIGNE.md`**) :
+   - **`JWT_SECRET`**
+   - **`MONGODB_USER`** + **`MONGODB_PASSWORD`** + **`MONGODB_HOST`** (recommandé)
+   - ou **`MONGODB_URI`**
+   - **`MONGODB_DB_NAME`** : `flotte_ppl`
 
-Sur Atlas : **Network Access** → autoriser les IP du cloud (ex. `0.0.0.0/0` pour tester).
+4. Vérifier : `https://<service>.onrender.com/api/status` → `"mongo": true`
+
+Sur Atlas : **Network Access** → `0.0.0.0/0` pour Render.
 
 ---
 
