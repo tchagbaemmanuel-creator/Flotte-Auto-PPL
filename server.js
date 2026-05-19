@@ -136,7 +136,12 @@ async function applyKeyUpdate(key, value, user) {
 
   if (key === 'p5_inscriptions_pending' && Array.isArray(value)) {
     next = mergeInscriptionPending(prev, value);
-    notifications.onInscriptionsUpdated(prev, next, DB).catch((e) => console.error('[NOTIF]', e.message));
+    try {
+      const withFlags = await notifications.onInscriptionsUpdated(prev, next, DB);
+      if (withFlags) next = withFlags;
+    } catch (e) {
+      console.error('[NOTIF]', e.message);
+    }
     console.log(`[INSCRIPTION] Mise à jour file d'attente (${next.length} entrée(s)) par ${user}`);
   } else if (key === 'p5_demandes_course' && Array.isArray(value)) {
     next = mergeDemandesCourse(prev, value);
@@ -404,6 +409,8 @@ app.get('/api/status', async (req, res) => {
     mongoEnvPresent: mongoEnvHints,
     mongoConnectError: MONGODB_URI && !isMongoConnected() ? mErr : null,
     mail: mailer.isConfigured(),
+    mailFrom: mailer.isConfigured() ? mailer.resolveFrom() : null,
+    mailVerifyError: mailer.getLastVerifyError(),
     mailEnv: {
       SMTP_HOST: !!normalizeEnvString(process.env.SMTP_HOST),
       SMTP_USER: !!normalizeEnvString(process.env.SMTP_USER),
@@ -483,7 +490,22 @@ io.on('connection', (socket) => {
 // ─── DÉMARRAGE ────────────────────────────────────────────────
 (async () => {
   mailer.init();
+  if (mailer.isConfigured()) {
+    await mailer.verifyConnection();
+  }
   await initMongo();
+  try {
+    const patched = await notifications.flushPendingInscriptionEmails(DB);
+    if (patched) {
+      DB.p5_inscriptions_pending = patched;
+      markMongoDirty('p5_inscriptions_pending');
+      if (isMongoConnected()) {
+        await db.saveKey('p5_inscriptions_pending', patched);
+      }
+    }
+  } catch (e) {
+    console.error('[NOTIF] Rattrapage inscriptions:', e.message);
+  }
   server.listen(PORT, '0.0.0.0', () => {
     const { networkInterfaces } = require('os');
     const nets = networkInterfaces();
