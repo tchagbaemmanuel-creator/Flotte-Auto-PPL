@@ -2041,7 +2041,7 @@ textarea.fi{resize:vertical;min-height:50px;}
           <div class="emi" onclick="xXLS('locations');closeEM()">📊 Excel — Toutes les locations</div>
         </div>
       </div>
-      <button class="btn bp" onclick="popLocSelects();openM('add-location')">+ Nouvelle location</button>
+      <button class="btn bp" onclick="openNewLocation()">+ Nouvelle location</button>
     </div>
   </div>
   <!-- KPIs -->
@@ -3432,11 +3432,13 @@ textarea.fi{resize:vertical;min-height:50px;}
     </div>
     <div class="fsec">🏢 Prestataire (loueur)</div>
     <div class="fg3">
-      <div class="fg sp2"><label class="fl">Prestataire *</label>
+      <div class="fg sp2"><label class="fl">Prestataire (liste)</label>
         <select class="fi" id="lv-prest" onchange="autoFillPrest()">
-          <option value="">— Sélectionner ou saisir —</option>
+          <option value="">— Choisir dans la liste —</option>
         </select>
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">Ou saisir le nom du loueur ci-dessous si absent de la liste.</div>
       </div>
+      <div class="fg sp2"><label class="fl">Loueur (saisie libre)</label><input class="fi" id="lv-prest-nom" placeholder="Nom du loueur si non enregistré dans Prestataires"></div>
       <div class="fg"><label class="fl">Contact direct</label><input class="fi" id="lv-contact" placeholder="+225 07..."></div>
       <div class="fg sp3"><label class="fl">Adresse / Localisation prestataire</label><input class="fi" id="lv-adresse" placeholder="ex: Zone Industrielle de Yopougon..."></div>
     </div>
@@ -3449,9 +3451,9 @@ textarea.fi{resize:vertical;min-height:50px;}
     </div>
     <div class="fsec">📅 Période & Coûts</div>
     <div class="fg3">
-      <div class="fg"><label class="fl">Date de départ *</label><input class="fi" id="lv-dep" type="datetime-local"></div>
-      <div class="fg"><label class="fl">Retour prévu *</label><input class="fi" id="lv-ret-prev" type="datetime-local"></div>
-      <div class="fg"><label class="fl">Coût par jour (FCFA) *</label><input class="fi" id="lv-cout-jour" type="number" placeholder="ex: 75000" oninput="calcLocCost()"></div>
+      <div class="fg"><label class="fl">Date de départ *</label><input class="fi" id="lv-dep" type="datetime-local" oninput="calcLocCost()" onchange="calcLocCost()"></div>
+      <div class="fg"><label class="fl">Retour prévu *</label><input class="fi" id="lv-ret-prev" type="datetime-local" oninput="calcLocCost()" onchange="calcLocCost()"></div>
+      <div class="fg"><label class="fl">Coût par jour (FCFA) *</label><input class="fi" id="lv-cout-jour" type="number" placeholder="ex: 75000" oninput="calcLocCost()" onchange="calcLocCost()"></div>
       <div class="fg"><label class="fl">Carburant inclus ?</label>
         <select class="fi" id="lv-carb">
           <option value="non">Non — PPL prend en charge</option>
@@ -3459,7 +3461,7 @@ textarea.fi{resize:vertical;min-height:50px;}
           <option value="partiel">Partiel — à négocier</option>
         </select>
       </div>
-      <div class="fg"><label class="fl">Caution versée (FCFA)</label><input class="fi" id="lv-caution" type="number" placeholder="0"></div>
+      <div class="fg"><label class="fl">Caution versée (FCFA)</label><input class="fi" id="lv-caution" type="number" placeholder="0" oninput="calcLocCost()" onchange="calcLocCost()"></div>
       <div class="fg"><label class="fl">Mode de paiement</label>
         <select class="fi" id="lv-paiement">
           <option>Virement bancaire</option><option>Espèces</option>
@@ -3479,15 +3481,16 @@ textarea.fi{resize:vertical;min-height:50px;}
     </div>
     <div class="fsec">✍️ Autorisations</div>
     <div class="fg3">
-      <div class="fg"><label class="fl">Responsable autorisant</label><input class="fi" id="lv-resp1" placeholder="Responsable logistique"></div>
-      <div class="fg"><label class="fl">Visa Directeur</label><input class="fi" id="lv-resp2" placeholder="DG / Directeur"></div>
+      <div class="fg"><label class="fl">Responsable parc auto</label><input class="fi" id="lv-resp1" placeholder="Responsable parc auto"></div>
+      <div class="fg"><label class="fl">Responsable service demandeur</label><input class="fi" id="lv-resp3" placeholder="Chef de service demandeur"></div>
+      <div class="fg"><label class="fl">Chargée des opérations</label><input class="fi" id="lv-resp2" placeholder="Chargée des opérations"></div>
       <div class="fg"><label class="fl">N° Contrat / Réf.</label><input class="fi" id="lv-ref" placeholder="Auto-généré si vide" readonly style="background:var(--s3);color:var(--t3)"></div>
     </div>
   </div>
   <div class="mf">
     <button class="btn bg" onclick="closeM('add-location')">Annuler</button>
     <button class="btn bgold" onclick="previewLocDoc()">👁 Aperçu bon de location</button>
-    <button class="btn" style="background:#06B6D4;color:#fff;border:none;font-size:11px;padding:7px 12px;border-radius:7px;cursor:pointer" onclick="(function(){var prest=document.getElementById('lv-prest');var vtype=document.getElementById('lv-type');var ref=(prest&&prest.value?prest.value.substring(0,25):'Prestataire')+(vtype&&vtype.value?' — '+vtype.value:'');openValidation('location_vehicule',{},ref);})()" title="Approbation location">✍️ Approbation</button>
+    <button class="btn" style="background:#06B6D4;color:#fff;border:none;font-size:11px;padding:7px 12px;border-radius:7px;cursor:pointer" onclick="(function(){var refEl=document.getElementById('lv-ref');var vtype=document.getElementById('lv-type');var ref=(refEl&&refEl.value?refEl.value:(vtype&&vtype.value?vtype.value:'Location'));openValidation('location_vehicule',{},ref);})()" title="Approbation location">✍️ Approbation</button>
     <button class="btn bp" onclick="saveLocation()">✓ Enregistrer la location</button>
   </div>
 </div></div>
@@ -5978,7 +5981,7 @@ function viewAF(vid){
     // Signatures — 4 boxes
     '<div style="display:flex;gap:10px;margin-top:4px">'+
       sigBox('Signature du bénéficiaire', v.attrib||'', '')+
-      sigBox('Responsable Parc-Auto', 'KOFFI DÉSIRÉ', 'Chargé de la Flotte')+
+      sigBox('Responsable parc auto', 'KOFFI DÉSIRÉ', 'Responsable parc auto')+
       sigBox('Responsable des Opérations', 'TOURÉ SALIMATA', 'Chargée des Opérations')+
       sigBox('Direction Générale', '', 'Directrice Générale')+
     '</div>'+
@@ -7775,9 +7778,10 @@ function delPanne(id){const p=gPa().find(x=>x.id===id);confirm2('Mettre à la co
 
 // ─── APPROBATEURS PPL (modifiables ici) ───────────────────
 const APPROB = {
-  resp1: { nom: 'M. KOFFI DÉSIRÉ',                    func: 'Chargé de la Flotte' },
-  resp2: { nom: 'Mme TOURE SALIMATA epse OUATTARA',   func: 'Chargée des Opérations' },
-  dg:    { nom: 'Direction Générale',                  func: 'Directeur Général' }
+  resp1: { nom: 'M. KOFFI DÉSIRÉ',                    func: 'Responsable parc auto' },
+  resp2: { nom: 'Mme TOURE SALIMATA epse OUATTARA',   func: 'Chargée des opérations' },
+  resp3: { nom: '',                                    func: 'Responsable service demandeur' },
+  dg:    { nom: 'Direction Générale',                  func: 'Direction Générale' }
 };
 
 
@@ -8158,32 +8162,74 @@ function calcLocCost(){
   const ret=document.getElementById('lv-ret-prev').value;
   const cout=parseFloat(document.getElementById('lv-cout-jour').value)||0;
   const caution=parseFloat(document.getElementById('lv-caution').value)||0;
-  if(!dep||!ret||!cout)return;
+  const e1=document.getElementById('lc-duree');
+  const e2=document.getElementById('lc-total');
+  const e3=document.getElementById('lc-avance');
+  if(!dep||!ret){
+    if(e1)e1.textContent='—';
+    if(e2)e2.textContent='—';
+    if(e3)e3.textContent='—';
+    return;
+  }
   const days=Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24)));
   const total=days*cout;
-  const e1=document.getElementById('lc-duree');if(e1)e1.textContent=days;
-  const e2=document.getElementById('lc-total');if(e2)e2.textContent=fmt(total);
-  const e3=document.getElementById('lc-avance');if(e3)e3.textContent=fmt(total+caution);
+  if(e1)e1.textContent=days;
+  if(e2)e2.textContent=cout?fmt(total):'—';
+  if(e3)e3.textContent=cout?fmt(total+caution):'—';
+}
+
+function resetLocationForm(){
+  var editHid=document.getElementById('lv-edit-id');if(editHid)editHid.value='';
+  var titleEl=document.querySelector('#mo-add-location .mtitle');
+  if(titleEl)titleEl.textContent='🚐 Enregistrer une location de véhicule';
+  var saveBtn=document.querySelector('#mo-add-location .mf .bp');
+  if(saveBtn){saveBtn.textContent='✓ Enregistrer la location';saveBtn.onclick=saveLocation;}
+  ['lv-type','lv-modele','lv-plate','lv-contact','lv-adresse','lv-objet','lv-itin','lv-service','lv-cout-jour','lv-caution','lv-notes','lv-prest-nom','lv-resp1','lv-resp2','lv-resp3'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.value='';
+  });
+  var prest=document.getElementById('lv-prest');if(prest)prest.value='';
+  var prestNom=document.getElementById('lv-prest-nom');if(prestNom){prestNom.value='';prestNom.disabled=false;}
+  var carb=document.getElementById('lv-carb');if(carb)carb.value='non';
+  calcLocCost();
+  if(typeof prefillApprob==='function')prefillApprob();
+}
+
+function openNewLocation(){
+  resetLocationForm();
+  popLocSelects();
+  openM('add-location');
 }
 
 function autoFillPrest(){
   const pid=parseInt(document.getElementById('lv-prest').value);
+  const nomLibre=document.getElementById('lv-prest-nom');
+  if(!pid){
+    if(nomLibre)nomLibre.disabled=false;
+    return;
+  }
   const pr=gPr().find(p=>p.id===pid);
   if(!pr)return;
   const tel=document.getElementById('lv-contact');if(tel)tel.value=pr.tel1||'';
   const adr=document.getElementById('lv-adresse');if(adr)adr.value=pr.adresse||'';
+  if(nomLibre){nomLibre.value=pr.nom||'';nomLibre.disabled=true;}
   const ref=document.getElementById('lv-ref');if(ref&&!ref.value)ref.value=genLocRef();
 }
 
-function popLocSelects(){
+function popLocSelects(opts){
+  opts=opts||{};
+  if(!gPr().length) save(Kl.prestataires, DEF_PREST||[]);
   const prs=gPr().filter(p=>p.actif!==false);
   const ds=gD();
-  const prestOpts='<option value="">-- Selectionner --</option>'+prs.map(p=>'<option value="'+p.id+'">'+p.nom+' ('+p.ville+')</option>').join('');
+  const prestOpts='<option value="">— Choisir dans la liste —</option>'+prs.map(p=>'<option value="'+p.id+'">'+p.nom+' ('+(p.ville||'')+')</option>').join('');
   const driverOpts='<option value="">-- Sans conducteur PPL --</option>'+ds.map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('');
   ['lv-prest'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=prestOpts;});
   ['lv-driver'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=driverOpts;});
-  const ref=document.getElementById('lv-ref');if(ref)ref.value=genLocRef();
-  const dep=document.getElementById('lv-dep');if(dep&&!dep.value)dep.value=nowDT();
+  if(!opts.keepRef){
+    const ref=document.getElementById('lv-ref');if(ref&&!ref.value)ref.value=genLocRef();
+  }
+  if(!opts.keepDates){
+    const dep=document.getElementById('lv-dep');if(dep&&!dep.value)dep.value=nowDT();
+  }
 }
 
 function saveLocation(){
@@ -8192,27 +8238,44 @@ function saveLocation(){
   const type=document.getElementById('lv-type').value;
   const dep=document.getElementById('lv-dep').value;
   const ret=document.getElementById('lv-ret-prev').value;
+  const objet=(document.getElementById('lv-objet').value||'').trim();
   const cout=parseFloat(document.getElementById('lv-cout-jour').value)||0;
-  if(!type||!dep||!ret){showT('Type, depart et retour requis','w');return;}
+  if(!type||!dep||!ret||!objet){showT('Type, dates et objet/mission sont obligatoires','w');return;}
+  if(!cout){showT('Indiquez le coût par jour','w');return;}
   const prestId=parseInt(document.getElementById('lv-prest').value)||null;
+  const prestNomLibre=(document.getElementById('lv-prest-nom').value||'').trim();
   const pr=prestId?gPr().find(p=>p.id===prestId):null;
+  const prestName=pr?pr.nom:prestNomLibre;
+  if(!prestName){showT('Choisissez un prestataire dans la liste ou saisissez le nom du loueur','w');return;}
   const days=Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24)));
   const ref=document.getElementById('lv-ref').value||genLocRef();
   const locs=gLoc();
-  const newLoc={id:uid(),ref,vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireId:prestId,prestataireName:pr?pr.nom:'',prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:document.getElementById('lv-objet').value,driverId:parseInt(document.getElementById('lv-driver').value)||null,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,retReel:null,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,coutFinal:null,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,status:'active',etatRetour:'',obsRetour:''};
+  const newLoc={id:uid(),ref,vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireId:prestId,prestataireName:prestName,prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:objet,driverId:parseInt(document.getElementById('lv-driver').value)||null,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,retReel:null,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,coutFinal:null,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,resp3:document.getElementById('lv-resp3').value,status:'active',etatRetour:'',obsRetour:''};
   locs.push(newLoc);save(Kl.locations,locs);
-  addLog('location','Location : '+ref+' — '+type+' | '+(pr?pr.nom:''));
+  if(typeof pushToServer==='function'){try{pushToServer(Kl.locations,locs);}catch(e){}}
+  addLog('location','Location : '+ref+' — '+type+' | '+prestName);
   closeM('add-location');renderLocations();
   const curLoc=newLoc;
-  confirm2('Location enregistree !','Afficher le bon de location ?',()=>{renderBonLoc(curLoc);openM('bon-loc');});
-  showT('Location enregistree !','s');
+  confirm2('Location enregistrée !','Afficher le bon de location ?',()=>{renderBonLoc(curLoc);openM('bon-loc');});
+  showT('Location enregistrée !','s');
 }
 
 function openRetLocation(id){
   document.getElementById('rl-id').value=id;
   const dt=document.getElementById('rl-date');if(dt)dt.value=nowDT();
   const l=gLoc().find(x=>x.id===id);
-  if(l){const c=document.getElementById('rl-cout');if(c)c.value=l.coutTotal||'';}
+  if(l){
+    const c=document.getElementById('rl-cout');
+    if(c)c.value=l.coutFinal!=null?l.coutFinal:(l.coutTotal||'');
+    var hint=document.getElementById('rl-cout-hint');
+    if(!hint){
+      hint=document.createElement('div');
+      hint.id='rl-cout-hint';
+      hint.style.cssText='font-size:10px;color:var(--t3);margin-top:4px';
+      if(c&&c.parentNode)c.parentNode.appendChild(hint);
+    }
+    if(hint)hint.textContent='Prévisionnel : '+fmt(l.coutTotal||0)+' FCFA ('+(l.days||'?')+' j × '+fmt(l.coutJour||0)+' F/j)';
+  }
   openM('ret-location');
 }
 function clotureLocation(){
@@ -8228,15 +8291,17 @@ function clotureLocation(){
 function delLocation(id){const l=gLoc().find(x=>x.id===id);confirm2('Mettre à la corbeille ?','',()=>{trashItem('location',id,l?l.ref+' '+(l.vehicleType||''):'Location',l?{...l}:{});save(Kl.locations,gLoc().filter(x=>x.id!==id));renderLocations();showT('Mis à la corbeille 🗑️');});}
 
 function previewLocDoc(){
+  calcLocCost();
   const type=document.getElementById('lv-type').value;
   if(!type){showT('Selectionnez un type de vehicule','w');return;}
   const prestId=parseInt(document.getElementById('lv-prest').value)||null;
   const pr=prestId?gPr().find(p=>p.id===prestId):null;
+  const prestNomLibre=(document.getElementById('lv-prest-nom').value||'').trim();
   const dep=document.getElementById('lv-dep').value;
   const ret=document.getElementById('lv-ret-prev').value;
   const cout=parseFloat(document.getElementById('lv-cout-jour').value)||0;
   const days=dep&&ret?Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24))):0;
-  const tmp={ref:document.getElementById('lv-ref').value||genLocRef(),vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireName:pr?pr.nom:'',prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:document.getElementById('lv-objet').value,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,status:'active'};
+  const tmp={ref:document.getElementById('lv-ref').value||genLocRef(),vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireName:pr?pr.nom:prestNomLibre,prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:document.getElementById('lv-objet').value,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,resp3:document.getElementById('lv-resp3').value,status:'active'};
   renderBonLoc(tmp);openM('bon-loc');
 }
 function viewBonLoc(id){const l=gLoc().find(x=>x.id===id);if(!l)return;renderBonLoc(l);openM('bon-loc');}
@@ -8271,9 +8336,9 @@ function renderBonLoc(loc){
       '</div><div class="lcb-val">'+fmt((loc.coutFinal||loc.coutTotal)+(loc.caution||0))+' FCFA</div></div>'+
       (loc.notes?'<div style="margin-top:9px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:5px;padding:8px;font-size:10px;color:#374151"><strong>Conditions: </strong>'+loc.notes+'</div>':'')+
       '<div class="loc-sigs">'+
-        '<div class="loc-sig"><div class="lsigl">Responsable autorisant</div><div class="lsign">'+(loc.resp1||'_________________')+'</div><div class="lsigf">Responsable Logistique</div><div class="lsig-area"></div></div>'+
-        '<div class="loc-sig"><div class="lsigl">Visa Directeur</div><div class="lsign">'+(loc.resp2||'_________________')+'</div><div class="lsigf">Direction Generale</div><div class="lsig-area"></div></div>'+
-        '<div class="loc-sig"><div class="lsigl">Prestataire / Loueur</div><div class="lsign">_________________</div><div class="lsigf">Representant du loueur</div><div class="lsig-area"></div></div>'+
+        '<div class="loc-sig"><div class="lsigl">Responsable parc auto</div><div class="lsign">'+(loc.resp1||'_________________')+'</div><div class="lsigf">Responsable parc auto</div><div class="lsig-area"></div></div>'+
+        '<div class="loc-sig"><div class="lsigl">Responsable service demandeur</div><div class="lsign">'+(loc.resp3||'_________________')+'</div><div class="lsigf">Chef de service demandeur</div><div class="lsig-area"></div></div>'+
+        '<div class="loc-sig"><div class="lsigl">Chargée des opérations</div><div class="lsign">'+(loc.resp2||'_________________')+'</div><div class="lsigf">Chargée des opérations</div><div class="lsig-area"></div></div>'+
       '</div>'+
     '</div>'+
     '<div class="loc-footer"><span>Prestige Poultry Limited</span><span>'+loc.ref+'</span><span>Document officiel</span></div>'+
@@ -8320,7 +8385,7 @@ function savePrest(){
 }
 function delPrest(id){const p=gPr().find(x=>x.id===id);confirm2('Mettre à la corbeille ?','',()=>{trashItem('prestataire',id,p?p.nom:'Prestataire',p?{...p}:{});save(Kl.prestataires,gPr().filter(x=>x.id!==id));renderPrestataires();showT('Mis à la corbeille 🗑️');});}
 function togglePrestActif(id){const pr=gPr();const i=pr.findIndex(p=>p.id===id);if(i>-1){pr[i].actif=!pr[i].actif;save(Kl.prestataires,pr);renderPrestataires();showT('Mis a jour.');}}
-function quickLocation(prestId){popLocSelects();const el=document.getElementById('lv-prest');if(el){el.value=prestId;autoFillPrest();}openM('add-location');}
+function quickLocation(prestId){openNewLocation();const el=document.getElementById('lv-prest');if(el){el.value=prestId;autoFillPrest();}}
 function showDetailPrest(id){
   const pr=gPr().find(p=>p.id===id);if(!pr)return;
   const locs=gLoc().filter(l=>l.prestataireId===id);
@@ -8735,15 +8800,16 @@ function updateMaint(id){
 // ─── PRE-FILL APPROBATEURS DANS LES FORMULAIRES ───
 function prefillApprob(){
   var A = (typeof APPROB !== 'undefined') ? APPROB : {
-    resp1:{nom:'Responsable Parc',func:'Chargé de la Flotte'},
-    resp2:{nom:'Chargée des Opérations',func:'Chargée des Opérations'},
-    dg:{nom:'Direction Générale',func:'Directeur Général'}
+    resp1:{nom:'Responsable Parc',func:'Responsable parc auto'},
+    resp2:{nom:'Chargée des opérations',func:'Chargée des opérations'},
+    resp3:{nom:'',func:'Responsable service demandeur'},
+    dg:{nom:'Direction Générale',func:'Direction Générale'}
   };
   const r1=document.getElementById('am-resp1');if(r1&&!r1.value)r1.value=A.resp1.nom;
   const r2=document.getElementById('am-resp2');if(r2&&!r2.value)r2.value=A.resp2.nom;
   const lr1=document.getElementById('lv-resp1');if(lr1&&!lr1.value)lr1.value=A.resp1.nom;
-  const lr2=document.getElementById('lv-resp2');if(lr2&&!lr2.value)lr2.value=A.dg.nom;
-  const br1=document.getElementById('am-resp1');if(br1&&!br1.value)br1.value=A.resp1.nom;
+  const lr2=document.getElementById('lv-resp2');if(lr2&&!lr2.value)lr2.value=A.resp2.nom;
+  const lr3=document.getElementById('lv-resp3');if(lr3&&!lr3.value)lr3.value=A.resp3.nom||'';
 }
 
 // ─── HOOK popSelects to pre-fill and add vehicle list in driver form ───
@@ -9429,7 +9495,7 @@ function genDiplome(){
   const [year,month]=moisVal.split('-');
   const moisNames=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
   const moisLabel=moisNames[parseInt(month)-1]+' '+year;
-  const APPROB_LOC=typeof APPROB!=='undefined'?APPROB:{resp1:{nom:'M. KOFFI DESIRE',func:'Chargé de la Flotte'},resp2:{nom:'Mme TOURE SALIMATA epse OUATTARA',func:'Chargée des Opérations'},dg:{nom:'Direction Générale',func:'Directeur Général'}};
+  const APPROB_LOC=typeof APPROB!=='undefined'?APPROB:{resp1:{nom:'M. KOFFI DESIRE',func:'Responsable parc auto'},resp2:{nom:'Mme TOURE SALIMATA epse OUATTARA',func:'Chargée des opérations'},resp3:{nom:'',func:'Responsable service demandeur'},dg:{nom:'Direction Générale',func:'Direction Générale'}};
   document.getElementById('diplome-content').innerHTML=
     '<div class="dip-ornament">✦ ✦ ✦ ✦ ✦</div>'+
     '<img class="dip-logo" src="'+LOGO_IMG+'" alt="PPL">'+
@@ -9805,7 +9871,7 @@ function renderEvalDoc(ev){
   const d=getD(ev.driverId);
   const mention=getMention(ev.score||0);
   const LOGO_IMG=LOGO;
-  const APPROB_LOC=typeof APPROB!=='undefined'?APPROB:{resp1:{nom:'M. KOFFI DESIRE',func:'Chargé de la Flotte'},resp2:{nom:'Mme TOURE SALIMATA epse OUATTARA',func:'Chargée des Opérations'},dg:{nom:'Direction Générale',func:'Directeur Général'}};
+  const APPROB_LOC=typeof APPROB!=='undefined'?APPROB:{resp1:{nom:'M. KOFFI DESIRE',func:'Responsable parc auto'},resp2:{nom:'Mme TOURE SALIMATA epse OUATTARA',func:'Chargée des opérations'},resp3:{nom:'',func:'Responsable service demandeur'},dg:{nom:'Direction Générale',func:'Direction Générale'}};
   const kpiRows=KPI_DEF.map((k,i)=>{
     const score=ev.kpiScores?ev.kpiScores[k.id]||0:0;
     const result=ev.kpiResults?ev.kpiResults[k.id]||'—':'—';
@@ -10522,31 +10588,40 @@ function openEditLocation(id){
   var saveBtn=document.querySelector('#mo-add-location .mf .bp');
   if(saveBtn){saveBtn.textContent='✓ Mettre à jour';saveBtn.onclick=function(){updateLocation(id);};}
   var editHid=document.getElementById('lv-edit-id');if(editHid)editHid.value=id;
-  popLocSelects();
-  var fill=function(elId,val){var el=document.getElementById(elId);if(el)el.value=val||'';};
+  popLocSelects({keepRef:true,keepDates:true});
+  var fill=function(elId,val){var el=document.getElementById(elId);if(el)el.value=val!=null&&val!==''?val:'';};
   fill('lv-type',l.vehicleType);fill('lv-modele',l.vehicleModele||'');fill('lv-plate',l.vehiclePlate||'');
-  fill('lv-prest',l.prestataireId||'');fill('lv-contact',l.prestContact||'');fill('lv-adresse',l.prestAdresse||'');
+  fill('lv-prest',l.prestataireId||'');fill('lv-prest-nom',l.prestataireId?'':(l.prestataireName||''));
+  fill('lv-contact',l.prestContact||'');fill('lv-adresse',l.prestAdresse||'');
   fill('lv-objet',l.objet||'');fill('lv-driver',l.driverId||'');fill('lv-itin',l.itin||'');
   fill('lv-service',l.service||'');fill('lv-dep',l.dep||'');fill('lv-ret-prev',l.retPrev||'');
-  fill('lv-cout-jour',l.coutJour||'');fill('lv-caution',l.caution||'');
+  fill('lv-cout-jour',l.coutJour!=null?l.coutJour:'');fill('lv-caution',l.caution!=null?l.caution:'');
   fill('lv-carb',l.carburant||'non');fill('lv-paiement',l.paiement||'');
-  fill('lv-notes',l.notes||'');fill('lv-resp1',l.resp1||'');fill('lv-resp2',l.resp2||'');
+  fill('lv-notes',l.notes||'');fill('lv-resp1',l.resp1||'');fill('lv-resp2',l.resp2||'');fill('lv-resp3',l.resp3||'');
   fill('lv-ref',l.ref||'');
+  calcLocCost();
   openM('add-location');
 }
 function updateLocation(id){
   var locs=gLoc();var idx=locs.findIndex(function(x){return x.id===id;});if(idx<0)return;
-  var prestId=parseInt(document.getElementById('lv-prest').value)||null;
-  var pr=prestId?gPr().find(function(p){return p.id===prestId;}):null;
+  var type=document.getElementById('lv-type').value;
   var dep=document.getElementById('lv-dep').value;
   var ret=document.getElementById('lv-ret-prev').value;
+  var objet=(document.getElementById('lv-objet').value||'').trim();
   var cout=parseFloat(document.getElementById('lv-cout-jour').value)||0;
+  if(!type||!dep||!ret||!objet){showT('Type, dates et objet/mission sont obligatoires','w');return;}
+  if(!cout){showT('Indiquez le coût par jour','w');return;}
+  var prestId=parseInt(document.getElementById('lv-prest').value)||null;
+  var prestNomLibre=(document.getElementById('lv-prest-nom').value||'').trim();
+  var pr=prestId?gPr().find(function(p){return p.id===prestId;}):null;
+  var prestName=pr?pr.nom:prestNomLibre;
+  if(!prestName){showT('Choisissez un prestataire dans la liste ou saisissez le nom du loueur','w');return;}
   var days=dep&&ret?Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24))):locs[idx].days;
   locs[idx]={...locs[idx],
-    vehicleType:document.getElementById('lv-type').value,
+    vehicleType:type,
     vehicleModele:document.getElementById('lv-modele').value,
     vehiclePlate:document.getElementById('lv-plate').value,
-    prestataireId:prestId,prestataireName:pr?pr.nom:'',
+    prestataireId:prestId,prestataireName:prestName,
     prestContact:document.getElementById('lv-contact').value,
     prestAdresse:document.getElementById('lv-adresse').value,
     objet:document.getElementById('lv-objet').value,
@@ -10559,9 +10634,12 @@ function updateLocation(id){
     paiement:document.getElementById('lv-paiement').value,
     notes:document.getElementById('lv-notes').value,
     resp1:document.getElementById('lv-resp1').value,
-    resp2:document.getElementById('lv-resp2').value
+    resp2:document.getElementById('lv-resp2').value,
+    resp3:document.getElementById('lv-resp3').value
   };
-  save(Kl.locations,locs);addLog('location','Location modifiée : '+locs[idx].ref);
+  save(Kl.locations,locs);
+  if(typeof pushToServer==='function'){try{pushToServer(Kl.locations,locs);}catch(e){}}
+  addLog('location','Location modifiée : '+locs[idx].ref);
   var titleEl=document.querySelector('#mo-add-location .mtitle');
   if(titleEl)titleEl.textContent='🚗 Nouvelle location de véhicule';
   var saveBtn=document.querySelector('#mo-add-location .mf .bp');
@@ -18854,21 +18932,33 @@ const gSigs = () => load(K_SIGNATURES) || [];
 
 // Grades — ordre hiérarchique : index élevé = niveau bas (valide en premier)
 const GRADES = [
-  { value:'direction_generale',    label:'Direction Générale',             icon:'🏛️', order:1 },
-  { value:'daf',                   label:'DAF — Dir. Admin. & Financière', icon:'💰', order:2 },
-  { value:'drh',                   label:'DRH — Dir. Ressources Humaines', icon:'👔', order:3 },
-  { value:'direction_operations',  label:'Direction des Opérations',       icon:'⚙️', order:4 },
-  { value:'responsable_logistique',label:'Resp. Logistique / Parc Auto',   icon:'🚗', order:5 },
-  { value:'responsable_direct',    label:'Resp. direct / Chef de service', icon:'👤', order:6 },
-  { value:'securite',              label:'Responsable Sécurité',           icon:'🛡️', order:7 },
-  { value:'autre',                 label:'Autre',                          icon:'📋', order:8 },
+  { value:'direction_generale',           label:'Direction Générale',             icon:'🏛️', order:1 },
+  { value:'chargee_operations',           label:'Chargée des opérations',         icon:'⚙️', order:2 },
+  { value:'responsable_service_demandeur',label:'Responsable service demandeur',  icon:'👤', order:3 },
+  { value:'responsable_parc_auto',        label:'Responsable parc auto',          icon:'🚗', order:4 },
+  { value:'daf',                          label:'DAF — Dir. Admin. & Financière', icon:'💰', order:5 },
+  { value:'drh',                          label:'DRH — Dir. Ressources Humaines',  icon:'👔', order:6 },
+  { value:'responsable_logistique',       label:'Resp. Logistique / Parc Auto',   icon:'🚗', order:7 },
+  { value:'responsable_direct',           label:'Resp. direct / Chef de service', icon:'👤', order:8 },
+  { value:'securite',                     label:'Responsable Sécurité',           icon:'🛡️', order:9 },
+  { value:'autre',                        label:'Autre',                          icon:'📋', order:10 },
 ];
 
+function normalizeGrade(val){
+  var aliases={
+    direction_operations:'chargee_operations',
+    responsable_logistique:'responsable_parc_auto',
+    responsable_direct:'responsable_service_demandeur'
+  };
+  return aliases[val]||val;
+}
 function getGradeLabel(val){
+  val=normalizeGrade(val);
   var g = GRADES.find(function(x){return x.value===val;});
   return g ? g.icon+' '+g.label : val||'—';
 }
 function getGradeOrder(val){
+  val=normalizeGrade(val);
   var g = GRADES.find(function(x){return x.value===val;});
   return g ? g.order : 99;
 }
@@ -18882,9 +18972,10 @@ function getRequiredApprovers(){
     if(!s.grade || !s.signature) return; // pas de grade ou pas de sig → pas dans le circuit
     var acc = accs.find(function(a){ return a.id===s.accId; });
     if(!acc) return;
+    var gradeNorm = normalizeGrade(s.grade);
     approvers.push({
-      accId: s.accId, name: acc.name, grade: s.grade, order: getGradeOrder(s.grade),
-      gradeLabel: getGradeLabel(s.grade), signature: s.signature, stamp: s.stamp||''
+      accId: s.accId, name: acc.name, grade: gradeNorm, order: getGradeOrder(gradeNorm),
+      gradeLabel: getGradeLabel(gradeNorm), signature: s.signature, stamp: s.stamp||''
     });
   });
   // Trier par ordre décroissant = terrain d'abord (order élevé = valide en premier)
@@ -19251,9 +19342,19 @@ function updateValidDecisionUI(){
   }
 }
 
-/** Recharge la page après une approbation (laisse le temps à la sync socket / HTTP). */
+/** Rafraîchit l'écran après approbation (sans recharger toute la page). */
 function _reloadAfterApproval(){
-  setTimeout(function(){ try { location.reload(); } catch(e) {} }, 450);
+  var type = _validCtx && _validCtx.type;
+  setTimeout(function(){
+    try{
+      if(type==='location_vehicule'){
+        closeM('add-location');
+        if(typeof renderLocations==='function') renderLocations();
+      }
+      if(typeof renderApprobations==='function') renderApprobations();
+      if(typeof renderAll==='function') renderAll();
+    }catch(e){}
+  }, 350);
 }
 
 function submitValidation(){
