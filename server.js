@@ -1,11 +1,16 @@
 /**
  * ═══════════════════════════════════════════════════════════════
  *   FLOTTE PPL — Serveur de synchronisation temps réel
- *   Node.js + Socket.IO + JWT
- *   Compatible FlottePPL_v31.html
+ *   Node.js + Express + Socket.IO + JWT + MongoDB (optionnel)
+ *   Compatible FlottePPL_v31.html — voir GUIDE_CODE.md
+ *
+ *   Rôle : servir l’app HTML, authentifier les utilisateurs, garder
+ *   toutes les données métier en mémoire (objet DB), les synchroniser
+ *   entre clients via WebSocket, persister sur disque et/ou MongoDB Atlas.
  * ═══════════════════════════════════════════════════════════════
  */
 
+// ─── Dépendances Node ───────────────────────────────────────────
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
@@ -31,7 +36,7 @@ function normalizeEnvString(v) {
   return s;
 }
 
-// ─── CONFIG ───────────────────────────────────────────────────
+// ─── CONFIGURATION (variables .env — voir .env.example) ─────────
 const PORT          = process.env.PORT || 3000;
 const JWT_SECRET    = process.env.JWT_SECRET || 'flotte_ppl_secret_2024_local';
 const { uri: MONGODB_URI, source: MONGO_URI_SOURCE } = db.resolveUri(process.env);
@@ -43,7 +48,8 @@ const DATA_FILE  = path.join(__dirname, 'data', 'flotte_data.json');
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
 const HTML_FILE  = path.join(__dirname, 'FlottePPL_v31.html');
 
-// ─── INITIALISATION ───────────────────────────────────────────
+// ─── INITIALISATION Express + Socket.IO ───────────────────────
+// CORS ouvert : l’app peut être servie depuis la même origine (port 3000)
 const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, {
@@ -62,7 +68,8 @@ if (!fs.existsSync(path.join(__dirname, 'data'))) {
   fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
 }
 
-// ─── PERSISTANCE JSON ─────────────────────────────────────────
+// ─── PERSISTANCE FICHIER JSON (data/flotte_data.json) ─────────
+// Utilisée en local ; sur Render sans Mongo les données sont éphémères.
 function loadData() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -129,7 +136,12 @@ function persistKeyToMongo(key) {
   }
 }
 
-/** Applique une mise à jour de clé (fusion + notifications + Mongo). */
+/**
+ * Point central d’écriture côté serveur.
+ * - Fusionne inscriptions / demandes de course (évite écrasement multi-postes)
+ * - Déclenche les e-mails via lib/notifications.js
+ * - Met à jour DB[key] et marque la clé pour flush Mongo
+ */
 async function applyKeyUpdate(key, value, user) {
   const prev = DB[key];
   let next = value;
@@ -176,7 +188,8 @@ function loadUsers() {
   return defaults;
 }
 
-// Sur Render avec Atlas : ne pas partir d’un JSON éphémère sur disque ; Atlas est la source de vérité.
+// DB = toutes les clés p5_* en RAM (miroir de ce que voit le client après sync)
+// Sur Render + Mongo : on démarre vide puis initMongo() charge depuis Atlas.
 let DB = IS_RENDER && MONGODB_URI ? {} : loadData();
 
 /** Connexion Atlas — kv_store (par clé) + GridFS médias ; migration auto depuis app_state. */
@@ -254,9 +267,9 @@ function getClientIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '?';
 }
 
-// ─── ROUTES HTTP ──────────────────────────────────────────────
+// ─── ROUTES HTTP (REST — complément au temps réel Socket.IO) ───
 
-// Servir l'application HTML
+// Page d’accueil : envoie FlottePPL_v31.html si présent dans le dossier
 app.get('/', (req, res) => {
   if (fs.existsSync(HTML_FILE)) {
     res.sendFile(HTML_FILE);
@@ -367,6 +380,30 @@ app.get('/api/media/:id', async (req, res) => {
   }
 });
 
+// ── NOTIF : Demande d’approbation circuit (e-mail aux autres approbateurs) ──
+app.post('/api/notify/approval-request', async (req, res) => {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.replace('Bearer ', '');
+  const payload = verifyJWT(token);
+  if (!payload) return res.status(401).json({ error: 'Non authentifié' });
+
+  const dossier = req.body?.dossier;
+  if (!dossier || !dossier.type || !dossier.refLabel) {
+    return res.status(400).json({ error: 'Dossier invalide' });
+  }
+
+  const requester = req.body?.requester || { id: payload.id, name: payload.name };
+  const result = await notifications.sendApprovalRequestEmails(DB, dossier, requester);
+  if (!result.ok) {
+    return res.status(503).json({
+      ok: false,
+      reason: result.reason || 'mail-failed',
+      targets: result.targets || []
+    });
+  }
+  res.json({ ok: true, targets: result.targets });
+});
+
 // ── STATUT serveur ──
 app.get('/api/status', async (req, res) => {
   const connected = [...io.sockets.sockets.values()].length;
@@ -436,7 +473,9 @@ app.get('/api/status', async (req, res) => {
   });
 });
 
-// ─── SOCKET.IO ────────────────────────────────────────────────
+// ─── SOCKET.IO — synchronisation temps réel entre navigateurs ─
+// Événements émis par le client HTML : set-key, user-hello, request-full-sync
+// Événements reçus : initial-data, data-update, users-online, user-joined/left
 const onlineUsers = new Map(); // socketId → { name, role }
 
 io.on('connection', (socket) => {
@@ -500,7 +539,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ─── DÉMARRAGE ────────────────────────────────────────────────
+// ─── DÉMARRAGE : mail → Mongo → rattrapage e-mails → listen ───
 (async () => {
   mailer.init();
   if (mailer.isConfigured()) {

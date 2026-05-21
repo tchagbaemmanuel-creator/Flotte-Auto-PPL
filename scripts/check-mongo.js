@@ -1,6 +1,7 @@
 /**
- * Teste la connexion MongoDB (local ou variables Render).
- * Usage : node scripts/check-mongo.js
+ * Script de diagnostic MongoDB — ne modifie aucune donnée.
+ * Usage : npm run check:mongo
+ * Vérifie .env puis affiche le nombre de clés kv_store et fichiers GridFS.
  */
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const db = require('../lib/database');
