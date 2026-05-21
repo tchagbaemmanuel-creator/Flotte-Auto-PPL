@@ -8190,10 +8190,93 @@ function initPrest(){
   if(!gPr()||gPr().length===0)save(Kl.prestataires,DEF_PREST);
 }
 
-function genLocRef(){
-  const locs=gLoc();const year=new Date().getFullYear();
-  const count=locs.filter(l=>{try{return new Date(l.dep).getFullYear()===year;}catch(e){return false;}}).length+1;
-  return 'LOC-'+year+'-'+String(count).padStart(4,'0');
+function parseLocRefNum(ref){
+  if(!ref) return 0;
+  var m=String(ref).match(/^LOC-(\d{4})-(\d+)/i);
+  return m?parseInt(m[2],10):0;
+}
+
+/** Prochain numéro LOC-AAAA-NNNN selon les références déjà enregistrées (pas la date de départ). */
+function genLocRef(excludeId){
+  var year=new Date().getFullYear();
+  var max=0;
+  gLoc().forEach(function(l){
+    if(excludeId!=null&&l.id===excludeId) return;
+    var m=String(l.ref||'').match(/^LOC-(\d{4})-(\d+)/i);
+    if(m&&parseInt(m[1],10)===year) max=Math.max(max,parseInt(m[2],10));
+  });
+  return 'LOC-'+year+'-'+String(max+1).padStart(4,'0');
+}
+
+/** Référence unique garantie à l'enregistrement (ignore le champ formulaire si déjà pris). */
+function allocateLocRef(excludeId){
+  var ref=genLocRef(excludeId);
+  var used={};
+  gLoc().forEach(function(l){
+    if(excludeId!=null&&l.id===excludeId) return;
+    if(l.ref) used[String(l.ref).toUpperCase()]=true;
+  });
+  var guard=0;
+  while(used[ref.toUpperCase()]&&guard++<9999){
+    var m=ref.match(/^LOC-(\d{4})-(\d+)$/i);
+    if(!m) break;
+    ref='LOC-'+m[1]+'-'+String(parseInt(m[2],10)+1).padStart(4,'0');
+  }
+  return ref;
+}
+
+/** Corrige les doublons LOC-AAAA-NNNN (garde le plus ancien, renumérote les suivants). */
+function repairLocRefDuplicates(){
+  var locs=gLoc();
+  if(!locs.length) return false;
+  var year=new Date().getFullYear();
+  var maxNum=0;
+  locs.forEach(function(l){
+    var m=String(l.ref||'').match(/^LOC-(\d{4})-(\d+)/i);
+    if(m&&parseInt(m[1],10)===year) maxNum=Math.max(maxNum,parseInt(m[2],10));
+  });
+  var byRef={};
+  locs.forEach(function(l){
+    var r=(l.ref||'').toUpperCase();
+    if(!r) return;
+    if(!byRef[r]) byRef[r]=[];
+    byRef[r].push(l);
+  });
+  var changed=false;
+  Object.keys(byRef).forEach(function(r){
+    var group=byRef[r];
+    if(group.length<=1) return;
+    group.sort(function(a,b){
+      var da=new Date(a.dep||0).getTime()||(a.id||0);
+      var db=new Date(b.dep||0).getTime()||(b.id||0);
+      return da-db;
+    });
+    for(var i=1;i<group.length;i++){
+      maxNum++;
+      group[i].ref='LOC-'+year+'-'+String(maxNum).padStart(4,'0');
+      changed=true;
+    }
+  });
+  locs.forEach(function(l){
+    if(l.ref&&/^LOC-\d{4}-\d+/i.test(l.ref)) return;
+    maxNum++;
+    l.ref='LOC-'+year+'-'+String(maxNum).padStart(4,'0');
+    changed=true;
+  });
+  if(changed){
+    save(Kl.locations,locs);
+    if(typeof pushToServer==='function'){try{pushToServer(Kl.locations,locs);}catch(e){}}
+  }
+  return changed;
+}
+
+function sortLocsChrono(locs){
+  return locs.slice().sort(function(a,b){
+    var da=new Date(a.dep||0).getTime()||0;
+    var db=new Date(b.dep||0).getTime()||0;
+    if(db!==da) return db-da;
+    return parseLocRefNum(b.ref)-parseLocRefNum(a.ref);
+  });
 }
 
 function calcLocCost(){
@@ -8223,7 +8306,7 @@ function resetLocationForm(){
   if(titleEl)titleEl.textContent='🚐 Enregistrer une location de véhicule';
   var saveBtn=document.querySelector('#mo-add-location .mf .bp');
   if(saveBtn){saveBtn.textContent='✓ Enregistrer la location';saveBtn.onclick=saveLocation;}
-  ['lv-type','lv-modele','lv-plate','lv-contact','lv-adresse','lv-objet','lv-itin','lv-service','lv-cout-jour','lv-caution','lv-notes','lv-prest-nom','lv-resp1','lv-resp2','lv-resp3'].forEach(function(id){
+  ['lv-type','lv-modele','lv-plate','lv-contact','lv-adresse','lv-objet','lv-itin','lv-service','lv-cout-jour','lv-caution','lv-notes','lv-prest-nom','lv-resp1','lv-resp2','lv-resp3','lv-ref'].forEach(function(id){
     var el=document.getElementById(id);if(el)el.value='';
   });
   var prest=document.getElementById('lv-prest');if(prest)prest.value='';
@@ -8236,6 +8319,8 @@ function resetLocationForm(){
 function openNewLocation(){
   resetLocationForm();
   popLocSelects();
+  var refEl=document.getElementById('lv-ref');
+  if(refEl) refEl.value=allocateLocRef();
   openM('add-location');
 }
 
@@ -8251,7 +8336,7 @@ function autoFillPrest(){
   const tel=document.getElementById('lv-contact');if(tel)tel.value=pr.tel1||'';
   const adr=document.getElementById('lv-adresse');if(adr)adr.value=pr.adresse||'';
   if(nomLibre){nomLibre.value=pr.nom||'';nomLibre.disabled=true;}
-  const ref=document.getElementById('lv-ref');if(ref&&!ref.value)ref.value=genLocRef();
+  const ref=document.getElementById('lv-ref');if(ref&&!ref.value)ref.value=allocateLocRef();
 }
 
 function popLocSelects(opts){
@@ -8264,7 +8349,7 @@ function popLocSelects(opts){
   ['lv-prest'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=prestOpts;});
   ['lv-driver'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=driverOpts;});
   if(!opts.keepRef){
-    const ref=document.getElementById('lv-ref');if(ref&&!ref.value)ref.value=genLocRef();
+    const ref=document.getElementById('lv-ref');if(ref)ref.value=allocateLocRef();
   }
   if(!opts.keepDates){
     const dep=document.getElementById('lv-dep');if(dep&&!dep.value)dep.value=nowDT();
@@ -8289,7 +8374,7 @@ function saveLocation(){
   const prestName=pr?pr.nom:prestNomLibre;
   if(!prestName){showT('Choisissez un prestataire dans la liste ou saisissez le nom du loueur','w');return;}
   const days=Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24)));
-  const ref=document.getElementById('lv-ref').value||genLocRef();
+  const ref=allocateLocRef();
   const locs=gLoc();
   const newLoc={id:uid(),ref,vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireId:prestId,prestataireName:prestName,prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:objet,driverId:parseInt(document.getElementById('lv-driver').value)||null,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,retReel:null,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,coutFinal:null,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,resp3:document.getElementById('lv-resp3').value,status:'active',etatRetour:'',obsRetour:''};
   locs.push(newLoc);save(Kl.locations,locs);
@@ -8342,7 +8427,7 @@ function previewLocDoc(){
   const ret=document.getElementById('lv-ret-prev').value;
   const cout=parseFloat(document.getElementById('lv-cout-jour').value)||0;
   const days=dep&&ret?Math.max(1,Math.ceil((new Date(ret)-new Date(dep))/(1000*3600*24))):0;
-  const tmp={ref:document.getElementById('lv-ref').value||genLocRef(),vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireName:pr?pr.nom:prestNomLibre,prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:document.getElementById('lv-objet').value,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,resp3:document.getElementById('lv-resp3').value,status:'active'};
+  const tmp={ref:allocateLocRef(),vehicleType:type,vehicleModele:document.getElementById('lv-modele').value,vehiclePlate:document.getElementById('lv-plate').value,prestataireName:pr?pr.nom:prestNomLibre,prestContact:document.getElementById('lv-contact').value,prestAdresse:document.getElementById('lv-adresse').value,objet:document.getElementById('lv-objet').value,itin:document.getElementById('lv-itin').value,service:document.getElementById('lv-service').value,dep,retPrev:ret,coutJour:cout,caution:parseFloat(document.getElementById('lv-caution').value)||0,coutTotal:days*cout,days,carburant:document.getElementById('lv-carb').value,paiement:document.getElementById('lv-paiement').value,notes:document.getElementById('lv-notes').value,resp1:document.getElementById('lv-resp1').value,resp2:document.getElementById('lv-resp2').value,resp3:document.getElementById('lv-resp3').value,status:'active'};
   renderBonLoc(tmp);openM('bon-loc');
 }
 function viewBonLoc(id){const l=gLoc().find(x=>x.id===id);if(!l)return;renderBonLoc(l);openM('bon-loc');}
@@ -8393,6 +8478,7 @@ function printBonLoc(){
 }
 
 function renderLocations(){
+  try{ repairLocRefDuplicates(); }catch(e){}
   const locs=gLoc();const now=new Date();
   const q=(document.getElementById('loc-q')||{}).value||'';
   const sf=(document.getElementById('loc-filter')||{}).value||'';
@@ -8400,7 +8486,7 @@ function renderLocations(){
   const e2=document.getElementById('loc-active');if(e2)e2.textContent=locs.filter(l=>l.status==='active').length;
   const e3=document.getElementById('loc-cost');if(e3)e3.textContent=fmt(locs.reduce((a,l)=>a+(l.coutFinal||l.coutTotal||0),0));
   const e4=document.getElementById('loc-month');if(e4)e4.textContent=locs.filter(l=>{try{const d=new Date(l.dep);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}catch(e){return false;}}).length;
-  const active=locs.filter(l=>l.status==='active');
+  const active=sortLocsChrono(locs.filter(l=>l.status==='active'));
   const ecnt=document.getElementById('loc-active-cnt');if(ecnt)ecnt.textContent=active.length+' en cours';
   const ag=document.getElementById('loc-active-grid');
   if(ag){ag.innerHTML=active.length?active.map(l=>{const d=getD(l.driverId);return'<div class="loc-card active"><div class="loc-ref">'+l.ref+'</div><div class="loc-title">'+l.vehicleType+(l.vehicleModele?' — '+l.vehicleModele:'')+'</div><div class="loc-row"><span>Prestataire</span><strong>'+(l.prestataireName||'—')+'</strong></div><div class="loc-row"><span>Mission</span><strong>'+(l.objet||'—')+'</strong></div><div class="loc-row"><span>Depart</span><strong>'+fmtDT(l.dep)+'</strong></div><div class="loc-row"><span>Retour prevu</span><strong>'+fmtDT(l.retPrev)+'</strong></div>'+(d?'<div class="loc-row"><span>Conducteur</span><strong>'+d.name+'</strong></div>':'')+' <div class="loc-cost">'+fmt(l.coutTotal)+' FCFA</div><div class="ab-row" style="margin-top:9px"><button class="btn bsuc" style="font-size:10px;padding:5px 9px" onclick="openRetLocation('+l.id+')">Cloturer</button><button class="btn bgold" style="font-size:10px;padding:5px 9px" onclick="viewBonLoc('+l.id+')">Bon</button></div></div>';}).join(''):'<div style="padding:16px;text-align:center;color:var(--t3);font-size:12px">Aucune location en cours</div>';}
@@ -8410,7 +8496,7 @@ function renderLocations(){
   const tbody=document.getElementById('loc-body');if(!tbody)return;
   if(!filtered.length){tbody.innerHTML='<tr><td colspan="13"><div class="empty"><div class="empty-ico">&#x1F690;</div><div class="empty-txt">Aucune location</div></div></td></tr>';return;}
   const smap={active:'<span class="badge bo">En cours</span>',done:'<span class="badge bgld">Terminee</span>',cancelled:'<span class="badge bm">Annulee</span>'};
-  tbody.innerHTML=[...filtered].reverse().map(l=>{const d=getD(l.driverId);return'<tr><td style="font-family:monospace;font-size:9px;font-weight:700;color:var(--gold)">'+l.ref+'</td><td><strong>'+l.vehicleType+'</strong>'+(l.vehicleModele?'<div style="font-size:9px;color:var(--t3)">'+l.vehicleModele+'</div>':'')+'</td><td style="font-size:11px">'+(l.prestataireName||'—')+'</td><td style="font-size:11px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(l.objet||'—')+'</td><td style="font-size:9.5px;font-family:monospace;white-space:nowrap">'+fmtDT(l.dep)+'</td><td style="font-size:9.5px;font-family:monospace;white-space:nowrap">'+fmtDT(l.retPrev)+'</td><td style="font-size:9.5px;font-family:monospace">'+(l.retReel?fmtDT(l.retReel):'—')+'</td><td style="font-family:monospace;font-size:10px">'+fmt(l.coutJour)+'</td><td style="font-family:monospace;font-size:10px;text-align:center">'+(l.days||'—')+'</td><td style="font-family:monospace;font-size:10px;color:var(--gold)">'+fmt(l.coutFinal||l.coutTotal)+'</td><td style="font-size:11px">'+(d?d.name:'—')+'</td><td>'+(smap[l.status]||'—')+'</td><td><div class="ab-row"><button class="abe" onclick="openEditLocation('+l.id+')" title="Modifier">✏️</button><button class="ab aba" onclick="viewBonLoc('+l.id+')" title="Bon">🖨️</button>'+(l.status==='active'?'<button class="ab abg" onclick="openRetLocation('+l.id+')" title="Cloturer">🏁</button>':'')+(CU&&CU.role!=='reader'?'<button class="ab abr" onclick="delLocation('+l.id+')">🗑</button>':'')+'</div></td></tr>';}).join('');
+  tbody.innerHTML=sortLocsChrono(filtered).map(l=>{const d=getD(l.driverId);return'<tr><td style="font-family:monospace;font-size:9px;font-weight:700;color:var(--gold)">'+l.ref+'</td><td><strong>'+l.vehicleType+'</strong>'+(l.vehicleModele?'<div style="font-size:9px;color:var(--t3)">'+l.vehicleModele+'</div>':'')+'</td><td style="font-size:11px">'+(l.prestataireName||'—')+'</td><td style="font-size:11px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(l.objet||'—')+'</td><td style="font-size:9.5px;font-family:monospace;white-space:nowrap">'+fmtDT(l.dep)+'</td><td style="font-size:9.5px;font-family:monospace;white-space:nowrap">'+fmtDT(l.retPrev)+'</td><td style="font-size:9.5px;font-family:monospace">'+(l.retReel?fmtDT(l.retReel):'—')+'</td><td style="font-family:monospace;font-size:10px">'+fmt(l.coutJour)+'</td><td style="font-family:monospace;font-size:10px;text-align:center">'+(l.days||'—')+'</td><td style="font-family:monospace;font-size:10px;color:var(--gold)">'+fmt(l.coutFinal||l.coutTotal)+'</td><td style="font-size:11px">'+(d?d.name:'—')+'</td><td>'+(smap[l.status]||'—')+'</td><td><div class="ab-row"><button class="abe" onclick="openEditLocation('+l.id+')" title="Modifier">✏️</button><button class="ab aba" onclick="viewBonLoc('+l.id+')" title="Bon">🖨️</button>'+(l.status==='active'?'<button class="ab abg" onclick="openRetLocation('+l.id+')" title="Cloturer">🏁</button>':'')+(CU&&CU.role!=='reader'?'<button class="ab abr" onclick="delLocation('+l.id+')">🗑</button>':'')+'</div></td></tr>';}).join('');
 }
 
 function savePrest(){
