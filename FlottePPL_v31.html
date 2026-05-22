@@ -1826,7 +1826,7 @@ textarea.fi{resize:vertical;min-height:50px;}
   <!-- CIRCUIT DE VALIDATION — intégré dans Comptes -->
   <div class="card" id="sig-panel-card" style="margin-bottom:14px;border-left:4px solid var(--gold)">
     <div class="ch">
-      <div class="ct"><span class="dot"></span>✅ Circuit de Validation &amp; Approbations</div>
+      <div class="ct"><span class="dot"></span>✅ Approbations (même circuit que demandes de course)</div>
       <div style="display:flex;align-items:center;gap:8px">
         <select class="fi" id="approb-type-filter" onchange="renderApprobations()" style="width:auto;padding:5px 9px;font-size:11px">
           <option value="">Tous les types</option>
@@ -1841,7 +1841,7 @@ textarea.fi{resize:vertical;min-height:50px;}
           <option value="en_attente">⏳ En attente</option>
           <option value="approuve">✅ Approuvé</option>
           <option value="rejete">❌ Rejeté</option>
-          <option value="cloture">🔒 Clôturé</option>
+          <option value="annule">🚫 Annulée</option>
         </select>
       </div>
     </div>
@@ -3049,6 +3049,9 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="fg3">
       <div class="fg"><label class="fl">Responsable Parc Auto *</label><input class="fi" id="am-resp1" placeholder="Nom du responsable parc"></div>
       <div class="fg"><label class="fl">Chargée d'opération *</label><input class="fi" id="am-resp2" placeholder="Nom de la chargée d'opération"></div>
+      <div class="fg"><label class="fl">Responsable du département</label><input class="fi" id="am-resp3" placeholder="Nom du responsable du département"></div>
+    </div>
+    <div class="fg3">
       <div class="fg"><label class="fl">N° Bon de réparation</label><input class="fi" id="am-bon" placeholder="Auto-généré si vide" readonly style="background:var(--s3);color:var(--t3)"></div>
     </div>
     <div class="fsec">📸 Justificatifs</div>
@@ -4513,6 +4516,9 @@ function connectSocket(){
       if (key === 'p5_demandes_course' && typeof renderDemandesPage === 'function') {
         try { renderDemandesPage(); } catch(e) {}
       }
+      if (key === 'p5_approb' && typeof renderApprobations === 'function') {
+        try { renderApprobations(); updApprobBadge(); } catch(e) {}
+      }
       if ((key === 'p5_ac' || key === 'p5_accounts') && !(typeof CU !== 'undefined' && CU)) {
         try { initChips(); } catch (e) {}
         showT('🔄 Compte(s) mis à jour — vous pouvez vous connecter', 'gold');
@@ -5609,7 +5615,19 @@ function _renderPage(page){
     case 'fuel':             try{renderFuelTable();}catch(e){} break;
     case 'assurance':        try{renderDocs();}catch(e){} break;
     case 'history':          try{renderHistory();}catch(e){} break;
-    case 'accounts':         try{renderAccs();}catch(e){} try{renderApprobations();}catch(e){} break;
+    case 'accounts':
+      try{
+        var _apOnly=CU&&CU.role==='approbateur';
+        ['sig-panel-card','approb-sig-grid2','accs-grid'].forEach(function(id){
+          var el=document.getElementById(id);
+          if(el) el.style.display=_apOnly?'none':'';
+        });
+        var sg=document.getElementById('sig-accounts-grid');
+        if(sg&&sg.closest('.card')) sg.closest('.card').style.display=_apOnly?'none':'';
+        if(_apOnly){ try{renderApprobations();}catch(e){} }
+        else{ try{renderAccs();}catch(e){} try{renderApprobations();}catch(e){} }
+      }catch(e){}
+      break;
     case 'corbeille':        try{renderCorbeille();}catch(e){} break;
     case 'motos':            try{renderMotos();}catch(e){} break;
     case 'moto-location':    try{initMotoLocFilters();renderMotoLocation();}catch(e){} break;
@@ -6516,7 +6534,7 @@ let currentBonId=null;
 function previewBonRep(){
   const vid=parseInt(document.getElementById('am-v').value);
   if(!vid){showT('Sélectionner un véhicule pour générer le bon','w');return;}
-  const tmp={id:'preview',vehicleId:vid,type:document.getElementById('am-t').value,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost:parseInt(document.getElementById('am-cost').value)||0,duree:document.getElementById('am-duree').value,notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value,resp1:document.getElementById('am-resp1').value,resp2:document.getElementById('am-resp2').value,bon:document.getElementById('am-bon').value||genBonNum(),status:'pending',photo:''};
+  const tmp={id:'preview',vehicleId:vid,type:document.getElementById('am-t').value,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost:parseInt(document.getElementById('am-cost').value)||0,duree:document.getElementById('am-duree').value,notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value,resp1:document.getElementById('am-resp1').value,resp2:document.getElementById('am-resp2').value,resp3:document.getElementById('am-resp3').value,bon:document.getElementById('am-bon').value||genBonNum(),status:'pending',photo:''};
   renderBonRep(tmp);openM('bon-rep');
 }
 function renderBonRep(maint){
@@ -6557,7 +6575,7 @@ function renderBonRep(maint){
         '<div class="bon-sigs-grid">'+
           '<div class="bon-sig-box"><div class="bsig-role">Responsable Parc Auto</div><div class="bsig-name">'+(maint.resp1||'_____________________')+'</div><div class="bsig-func">Responsable du parc automobile</div><div class="bon-sig-area"></div></div>'+
           '<div class="bon-sig-box"><div class="bsig-role">Chargée d\'Opération</div><div class="bsig-name">'+(maint.resp2||'_____________________')+'</div><div class="bsig-func">Chargée des opérations logistiques</div><div class="bon-sig-area"></div></div>'+
-          '<div class="bon-sig-box"><div class="bsig-role">Atelier / Prestataire</div><div class="bsig-name">_____________________</div><div class="bsig-func">Responsable atelier / garage</div><div class="bon-sig-area"></div></div>'+
+          '<div class="bon-sig-box"><div class="bsig-role">Responsable du département</div><div class="bsig-name">'+(maint.resp3||'_____________________')+'</div><div class="bsig-func">Responsable du département</div><div class="bon-sig-area"></div></div>'+
         '</div>'+
       '</div>'+
       '<div class="bon-conditions"><strong>CONDITIONS D\'EXECUTION :</strong> Les travaux doivent être exécutés conformément aux normes techniques en vigueur. Tout travail supplémentaire non prévu doit faire l\'objet d\'une autorisation préalable. La réception définitive du véhicule sera effectuée après vérification par la Chargée d\'Opération. Toute pièce remplacée doit être présentée au Responsable Parc Auto avant evacuation.</div>'+
@@ -6592,7 +6610,7 @@ function saveM(){
   const cost=parseInt(document.getElementById('am-cost').value)||0;
   const v=getV(vid);
   const dept = v ? (v.usage==='LIVRAISON'?'livraison':v.usage==='COMMERCIAL'?'commercial':v.usage==='PRODUCTION'?'production':'admin') : 'admin';
-  const newM={id:uid(),vehicleId:vid,type,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost,duree:document.getElementById('am-duree').value||'',notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value||'',resp1:document.getElementById('am-resp1').value||'',resp2:document.getElementById('am-resp2').value||'',bon,photo:finalPhoto,status:'pending',dept};
+  const newM={id:uid(),vehicleId:vid,type,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost,duree:document.getElementById('am-duree').value||'',notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value||'',resp1:document.getElementById('am-resp1').value||'',resp2:document.getElementById('am-resp2').value||'',resp3:document.getElementById('am-resp3').value||'',bon,photo:finalPhoto,status:'pending',dept};
   ms.push(newM);
   save(K.maint,ms);
   // Deduct from department budget
@@ -8880,7 +8898,7 @@ function editMaint(id){
   fill('am-v',m.vehicleId); fill('am-t',m.type); fill('am-dt',m.date);
   fill('am-km',m.km); fill('am-gar',m.garage); fill('am-cost',m.cost);
   fill('am-notes',m.notes); fill('am-pieces',m.pieces||'');
-  fill('am-resp1',m.resp1||(typeof APPROB!=='undefined'?APPROB.resp1.nom:'')); fill('am-resp2',m.resp2||(typeof APPROB!=='undefined'?APPROB.resp2.nom:''));
+  fill('am-resp1',m.resp1||(typeof APPROB!=='undefined'?APPROB.resp1.nom:'')); fill('am-resp2',m.resp2||(typeof APPROB!=='undefined'?APPROB.resp2.nom:'')); fill('am-resp3',m.resp3||'');
   fill('am-bon',m.bon); fill('am-duree',m.duree||'');
   // Restore photo/facture preview
   const factB64El=document.getElementById('am-facture-b64');
@@ -8917,7 +8935,7 @@ function updateMaint(id){
   const factB64=document.getElementById('am-facture-b64')?document.getElementById('am-facture-b64').value:'';
   const photoSrc=photoEl&&photoEl.src&&!photoEl.src.endsWith('html')?photoEl.src:'';
   const photo=factB64||photoSrc||ms[idx].photo||'';
-  ms[idx]={...ms[idx],vehicleId:parseInt(document.getElementById('am-v').value),type:document.getElementById('am-t').value,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost:parseInt(document.getElementById('am-cost').value)||0,duree:document.getElementById('am-duree').value||'',notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value||'',resp1:document.getElementById('am-resp1').value||'',resp2:document.getElementById('am-resp2').value||'',bon:document.getElementById('am-bon').value||ms[idx].bon,photo};
+  ms[idx]={...ms[idx],vehicleId:parseInt(document.getElementById('am-v').value),type:document.getElementById('am-t').value,date:document.getElementById('am-dt').value||today(),km:parseInt(document.getElementById('am-km').value)||0,garage:document.getElementById('am-gar').value,cost:parseInt(document.getElementById('am-cost').value)||0,duree:document.getElementById('am-duree').value||'',notes:document.getElementById('am-notes').value,pieces:document.getElementById('am-pieces').value||'',resp1:document.getElementById('am-resp1').value||'',resp2:document.getElementById('am-resp2').value||'',resp3:document.getElementById('am-resp3').value||'',bon:document.getElementById('am-bon').value||ms[idx].bon,photo};
   save(K.maint,ms);addLog('maint','Entretien modifié : '+ms[idx].bon);
   const title=document.querySelector('#mo-addmaint .mtitle');if(title)title.textContent='🔧 Planifier un entretien / réparation';
   const saveBtn=document.querySelector('#mo-addmaint .mf .bp');if(saveBtn){saveBtn.textContent='✓ Enregistrer & Générer bon';saveBtn.onclick=saveM;}
@@ -8934,6 +8952,7 @@ function prefillApprob(){
   };
   const r1=document.getElementById('am-resp1');if(r1&&!r1.value)r1.value=A.resp1.nom;
   const r2=document.getElementById('am-resp2');if(r2&&!r2.value)r2.value=A.resp2.nom;
+  const r3=document.getElementById('am-resp3');if(r3&&!r3.value)r3.value=A.resp3.nom||'';
   const lr1=document.getElementById('lv-resp1');if(lr1&&!lr1.value)lr1.value=A.resp1.nom;
   const lr2=document.getElementById('lv-resp2');if(lr2&&!lr2.value)lr2.value=A.resp2.nom;
   const lr3=document.getElementById('lv-resp3');if(lr3&&!lr3.value)lr3.value=A.resp3.nom||'';
@@ -14145,6 +14164,7 @@ var _accImages=[];
     var notes=((document.getElementById('am-notes')||{}).value||'').trim();
     var resp1=((document.getElementById('am-resp1')||{}).value||'');
     var resp2=((document.getElementById('am-resp2')||{}).value||'');
+    var resp3=((document.getElementById('am-resp3')||{}).value||'');
     var bon=((document.getElementById('am-bon')||{}).value||'')||genBonNum();
     var duree=((document.getElementById('am-duree')||{}).value||'');
     var editId=(document.getElementById('am-edit-id')||{}).value;
@@ -14152,7 +14172,7 @@ var _accImages=[];
     var obj={
       id:editId?parseInt(editId):uid(),
       vehicleId:vid, type, date:dt, km, garage, cost, pieces, notes,
-      resp1, resp2, bon, duree, dept, status:'pending',
+      resp1, resp2, resp3, bon, duree, dept, status:'pending',
       photo:(document.getElementById('am-facture-b64')||{}).value||''
     };
     if(editId){
@@ -19048,11 +19068,99 @@ const APPROB_TYPES = {
   entretien:            { label: 'Entretien véhicule',           icon: '🔧', color: '#F59E0B' },
   carburant_rechargement:{ label: 'Rechargement carte carburant',icon: '⛽', color: '#10B981' },
   moto_location_vente:  { label: 'Location / Vente moto',       icon: '🛵', color: '#EC4899' },
-  location_vehicule:    { label: 'Location véhicule',           icon: '🚐', color: '#06B6D4' },
 };
 
+var APPROB_REF_PREFIX = {
+  sortie: 'SO', mission: 'OM', entretien: 'EN',
+  carburant_rechargement: 'CA', moto_location_vente: 'MV'
+};
+
+function genApprobRef(type){
+  var pre=APPROB_REF_PREFIX[type]||'AP';
+  var today=new Date().toISOString().split('T')[0].replace(/-/g,'');
+  var n=(gApprob().filter(function(d){return d.type===type;}).length+1).toString().padStart(4,'0');
+  return pre+'-'+today+'-'+n;
+}
+
+function getApprobStatut(d){
+  if(!d) return 'en_attente';
+  if(d.statut) return d.statut;
+  if(d.status) return d.status;
+  if(d.isDossier && typeof getDossierStatus==='function') return getDossierStatus(d);
+  return 'en_attente';
+}
+
+function normalizeApprobRecord(d){
+  if(!d||typeof d!=='object') return d;
+  var statut=getApprobStatut(d);
+  var ctx=d.contextObj&&typeof d.contextObj==='object'?d.contextObj:{};
+  return Object.assign({},d,{
+    isDemande:true,
+    isDossier:true,
+    statut:statut,
+    status:statut,
+    ref:d.ref||genApprobRef(d.type||'AP'),
+    demandeurId:d.demandeurId!=null?d.demandeurId:0,
+    demandeurNom:d.demandeurNom||d.createdBy||'—',
+    demandeurEmail:d.demandeurEmail||'',
+    service:d.service||'',
+    refLabel:d.refLabel||'—',
+    motif:d.motif||(ctx.motif||ctx.objet||ctx.destination||d.refLabel||''),
+    contextObj:ctx
+  });
+}
+
+function migrateApprobStorage(){
+  var raw=gApprob();
+  var out=raw.map(normalizeApprobRecord);
+  if(JSON.stringify(raw)!==JSON.stringify(out)) save(K_APPROB,out);
+  return out;
+}
+
+function saveApprobList(arr){
+  var merged=arr.map(normalizeApprobRecord);
+  save(K_APPROB,merged);
+  if(typeof pushToServer==='function'&&typeof _socket!=='undefined'&&_socket&&_socket.connected){
+    try{pushToServer(K_APPROB,merged);}catch(e){}
+  }
+  return merged;
+}
+
+function getVisibleApprobations(){
+  var list=migrateApprobStorage();
+  if(!CU) return [];
+  var isA=CU.role==='admin'||CU.role==='manager';
+  var isP=CU.role==='approbateur';
+  if(isA) return list;
+  if(isP){
+    var collabs=gAcc().filter(function(a){
+      return a.active!==false&&String(a.approbateurId)===String(CU.id)&&a.approbateurId;
+    }).map(function(a){return String(a.id);});
+    return list.filter(function(d){
+      if(d.demandeurId&&collabs.indexOf(String(d.demandeurId))>=0) return true;
+      if(!d.demandeurId||d.demandeurId===0) return true;
+      return false;
+    });
+  }
+  return list.filter(function(d){
+    return String(d.demandeurId)===String(CU.id)||d.demandeurNom===CU.name;
+  });
+}
+
+function getApprobResume(d){
+  var ctx=d.contextObj||{};
+  var cfg=APPROB_TYPES[d.type]||{label:d.type};
+  var parts=[cfg.label];
+  if(ctx.destination) parts.push(ctx.destination);
+  else if(ctx.objet) parts.push(ctx.objet);
+  else if(ctx.motif) parts.push(ctx.motif);
+  else if(d.refLabel) parts.push(d.refLabel);
+  if(ctx.vehicleLabel) parts.push(ctx.vehicleLabel);
+  return parts.join(' — ');
+}
+
 // ═══════════════════════════════════════════════════════════
-// CIRCUIT DE VALIDATION HIÉRARCHIQUE
+// CIRCUIT DE VALIDATION HIÉRARCHIQUE (legacy — signatures optionnelles)
 // Ordre ascendant : le terrain valide en premier, la direction en dernier
 // Un niveau supérieur ne peut valider que si le niveau inférieur a approuvé
 // Un rejet à n'importe quel niveau clôt la chaîne en REJETÉ
@@ -19479,7 +19587,7 @@ function _mailtoApprovers(dossier, targets){
   else showT('E-mail préparé pour '+targets[0].name,'s');
 }
 
-/** Demande d’approbation : enregistre le contexte formulaire + e-mail aux autres approbateurs (sans ouvrir la modal). */
+/** Demande d’approbation — même flux que demande de course (en_attente + e-mail approbateurs). */
 async function requestApproval(type){
   if(type==='location_vehicule'){showT('Pas d\'approbation pour les locations véhicules','w');return;}
   var cfg=APPROB_TYPES[type];
@@ -19487,20 +19595,32 @@ async function requestApproval(type){
   if(!CU){showT('Non connecté','w');return;}
   var refLabel=buildApprovalRef(type);
   var ctx=collectApprovalContext(type);
-  var all=gApprob();
-  var dossier=all.find(function(d){return d.type===type&&d.refLabel===refLabel&&d.isDossier;});
-  if(!dossier){
-    dossier={id:uid(),type:type,refLabel:refLabel,contextObj:ctx,isDossier:true,steps:[],createdAt:new Date().toISOString(),createdBy:CU.name,status:'en_attente'};
-    all.push(dossier);
-  }else{
-    dossier.contextObj=ctx;
-    dossier.status='en_attente';
-  }
-  save(K_APPROB,all);
-  if(typeof pushToServer==='function'){try{await pushToServer(K_APPROB,all);}catch(e){}}
-  addLog('approb',cfg.label+' — demande envoyée ('+refLabel+') par '+CU.name);
+  var all=migrateApprobStorage();
+  var dossier={
+    id:uid(),
+    ref:genApprobRef(type),
+    type:type,
+    refLabel:refLabel,
+    statut:'en_attente',
+    status:'en_attente',
+    demandeurId:CU.id,
+    demandeurNom:CU.name,
+    demandeurEmail:CU.email||'',
+    service:CU.dept||'',
+    contextObj:ctx,
+    motif:ctx.motif||ctx.objet||ctx.destination||refLabel,
+    createdAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString(),
+    isDemande:true,
+    isDossier:true,
+    steps:[]
+  };
+  all.push(dossier);
+  saveApprobList(all);
+  addLog('approb',cfg.label+' — demande '+dossier.ref+' ('+refLabel+') par '+CU.name);
   await notifyApproversByMail(dossier);
   try{renderApprobations();updApprobBadge();}catch(e){}
+  showT('Demande soumise — en attente d\'approbation (comme demande de course)','s');
 }
 
 // ─── Open validation modal ───
@@ -19721,102 +19841,155 @@ function submitValidation(){
   }
 }
 
-// ─── Render approbations page ───
-function renderApprobations(){
-  var body = document.getElementById('approb-body');
-  if(!body) return;
-  var typeF   = (document.getElementById('approb-type-filter')||{}).value||'';
-  var statusF = (document.getElementById('approb-status-filter')||{}).value||'';
-
-  // Recalculer le statut de chaque dossier
-  var all = gApprob().filter(function(d){ return d.isDossier; }).slice().reverse();
-  // Mettre à jour les statuts calculés
-  all.forEach(function(d){ d.status = getDossierStatus(d); });
-
-  if(typeF)   all = all.filter(function(d){ return d.type===typeF; });
-  if(statusF) all = all.filter(function(d){ return d.status===statusF; });
-
-  // Stats (sur tous les dossiers)
-  var full = gApprob().filter(function(d){ return d.isDossier; });
-  full.forEach(function(d){ d.status = getDossierStatus(d); });
-  var e1=document.getElementById('approb-total');    if(e1) e1.textContent=full.length;
-  var e2=document.getElementById('approb-pending');  if(e2) e2.textContent=full.filter(function(d){return d.status==='en_attente';}).length;
-  var e3=document.getElementById('approb-approved'); if(e3) e3.textContent=full.filter(function(d){return d.status==='approuve';}).length;
-  var e4=document.getElementById('approb-rejected'); if(e4) e4.textContent=full.filter(function(d){return d.status==='rejete';}).length;
-
-  if(!all.length){
-    body.innerHTML='<div class="empty"><div class="empty-ico">✅</div><div class="empty-txt">Aucune demande d\'approbation</div></div>';
-    return;
+// ─── Approbations : approuver / rejeter (comme demandes de course) ───
+window.approuverApprobation=function(id){
+  if(!CU){showT('Non connecté','w');return;}
+  var isA=CU.role==='admin'||CU.role==='manager';
+  var isP=CU.role==='approbateur';
+  if(!isA&&!isP){showT('Droits insuffisants','w');return;}
+  if(typeof confirm2==='function'){
+    confirm2('Approuver cette demande ?','',function(){
+      var all=migrateApprobStorage();
+      var idx=all.findIndex(function(d){return d.id===id;});
+      if(idx<0) return;
+      all[idx].statut='approuve';
+      all[idx].status='approuve';
+      all[idx].approbateurNom=CU.name;
+      all[idx].approbateurId=CU.id;
+      all[idx].dateApprobation=new Date().toISOString();
+      all[idx].updatedAt=new Date().toISOString();
+      saveApprobList(all);
+      addLog('approb','Approuvée: '+(all[idx].ref||all[idx].refLabel));
+      renderApprobations();updApprobBadge();
+      showT('Demande approuvée','s');
+    });
   }
+};
 
-  var required = getRequiredApprovers();
+window.rejeterApprobation=function(id){
+  if(!CU){showT('Non connecté','w');return;}
+  var isA=CU.role==='admin'||CU.role==='manager';
+  var isP=CU.role==='approbateur';
+  if(!isA&&!isP){showT('Droits insuffisants','w');return;}
+  var motif=prompt('Motif du rejet (obligatoire):');
+  if(!motif||!motif.trim()){showT('Motif de rejet obligatoire','w');return;}
+  var all=migrateApprobStorage();
+  var idx=all.findIndex(function(d){return d.id===id;});
+  if(idx<0) return;
+  all[idx].statut='rejete';
+  all[idx].status='rejete';
+  all[idx].motifRejet=motif.trim();
+  all[idx].approbateurNom=CU.name;
+  all[idx].approbateurId=CU.id;
+  all[idx].dateApprobation=new Date().toISOString();
+  all[idx].updatedAt=new Date().toISOString();
+  saveApprobList(all);
+  addLog('approb','Rejetée: '+(all[idx].ref||all[idx].refLabel)+' — '+motif);
+  renderApprobations();updApprobBadge();
+  showT('Demande rejetée','w');
+};
 
-  body.innerHTML = all.map(function(d){
-    var cfg = APPROB_TYPES[d.type]||{label:d.type,icon:'📋',color:'#6B7280'};
-    var status = d.status;
-    var statusBadge = status==='approuve'
-      ? '<span class="badge ba">✅ Approuvé</span>'
-      : status==='rejete'
-      ? '<span class="badge bm">❌ Rejeté</span>'
-      : status==='cloture'
-      ? '<span class="badge bi">🔒 Clôturé</span>'
-      : '<span class="badge bi">⏳ En attente</span>';
+window.annulerApprobation=function(id){
+  if(typeof confirm2!=='function') return;
+  confirm2('Annuler cette demande ?','',function(){
+    var all=migrateApprobStorage();
+    var idx=all.findIndex(function(d){return d.id===id;});
+    if(idx<0) return;
+    all[idx].statut='annule';
+    all[idx].status='annule';
+    all[idx].updatedAt=new Date().toISOString();
+    saveApprobList(all);
+    renderApprobations();updApprobBadge();
+    showT('Demande annulée','s');
+  });
+};
 
-    // Progression du circuit
-    var stepsHtml = '';
-    if(required.length){
-      stepsHtml = '<div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap">';
-      required.forEach(function(req){
-        var step = d.steps && d.steps.find(function(s){ return s.accId===req.accId; });
-        var icon, color;
-        if(step){
-          if(step.decision==='approuve'||step.decision==='approuve_conditions'){ icon='✅'; color='#059669'; }
-          else if(step.decision==='rejete'){ icon='❌'; color='#DC2626'; }
-          else { icon='⏳'; color='#D97706'; }
-        } else { icon='⬜'; color='#9CA3AF'; }
-        stepsHtml += '<span title="'+req.name+' ('+req.gradeLabel+')" style="font-size:10px;background:'+color+'22;color:'+color+';border:1px solid '+color+'44;border-radius:4px;padding:2px 6px;cursor:help">'+icon+' '+req.name.split(' ')[0]+'</span>';
-      });
-      stepsHtml += '</div>';
+window.voirDetailApprobation=function(id){
+  var d=migrateApprobStorage().find(function(x){return x.id===id;});
+  if(!d) return;
+  var cfg=APPROB_TYPES[d.type]||{label:d.type,icon:'📋'};
+  var ctx=d.contextObj||{};
+  var lines=Object.keys(ctx).filter(function(k){return ctx[k];}).map(function(k){return k+': '+ctx[k];}).join('\n');
+  alert(cfg.icon+' '+cfg.label+'\nRéf: '+(d.ref||'—')+'\nRésumé: '+getApprobResume(d)+'\nDemandeur: '+d.demandeurNom+'\nStatut: '+getApprobStatut(d)+(d.motifRejet?'\nMotif rejet: '+d.motifRejet:'')+(lines?'\n\n'+lines:''));
+};
+
+// ─── Render approbations (tableau = demandes de course) ───
+function renderApprobations(){
+  var body=document.getElementById('approb-body');
+  if(!body) return;
+  if(!CU) return;
+  var typeF=(document.getElementById('approb-type-filter')||{}).value||'';
+  var statusF=(document.getElementById('approb-status-filter')||{}).value||'';
+  var isA=CU.role==='admin'||CU.role==='manager';
+  var isP=CU.role==='approbateur';
+  var isD=!isA&&!isP;
+
+  var full=getVisibleApprobations();
+  var all=full.slice().sort(function(a,b){
+    var pA=getApprobStatut(a)==='en_attente'?0:1;
+    var pB=getApprobStatut(b)==='en_attente'?0:1;
+    if(pA!==pB) return pA-pB;
+    return (b.createdAt||'').localeCompare(a.createdAt||'');
+  });
+  if(typeF) all=all.filter(function(d){return d.type===typeF;});
+  if(statusF) all=all.filter(function(d){return getApprobStatut(d)===statusF;});
+
+  var e1=document.getElementById('approb-total');if(e1) e1.textContent=full.length;
+  var e2=document.getElementById('approb-pending');if(e2) e2.textContent=full.filter(function(d){return getApprobStatut(d)==='en_attente';}).length;
+  var e3=document.getElementById('approb-approved');if(e3) e3.textContent=full.filter(function(d){return getApprobStatut(d)==='approuve';}).length;
+  var e4=document.getElementById('approb-rejected');if(e4) e4.textContent=full.filter(function(d){return getApprobStatut(d)==='rejete';}).length;
+
+  var SL=typeof STATUTS!=='undefined'?STATUTS:{
+    en_attente:{label:'⏳ En attente',color:'#6B7280',bg:'#F3F4F6'},
+    approuve:{label:'✅ Approuvée',color:'#059669',bg:'#F0FDF4'},
+    rejete:{label:'❌ Rejetée',color:'#DC2626',bg:'#FEF2F2'},
+    annule:{label:'🚫 Annulée',color:'#9CA3AF',bg:'#F9FAFB'}
+  };
+  var fmtD2=function(s){if(!s) return '—';try{return new Date(s).toLocaleDateString('fr-FR');}catch(e){return s;}};
+
+  var rows=all.length?all.map(function(d){
+    var cfg=APPROB_TYPES[d.type]||{label:d.type,icon:'📋',color:'#6B7280'};
+    var st=SL[getApprobStatut(d)]||SL.en_attente;
+    var btn='';
+    if((isA||isP)&&getApprobStatut(d)==='en_attente'){
+      btn+='<button class="abe" style="color:#059669" onclick="approuverApprobation('+d.id+')" title="Approuver">✅</button>';
+      btn+='<button class="abe" style="color:#DC2626" onclick="rejeterApprobation('+d.id+')" title="Rejeter">❌</button>';
     }
-
-    // Canister : est-ce que l'utilisateur courant peut encore valider ?
-    var canApprove = canCurrentUserApprove(d);
-    var myActionBtn = '';
-    if(canApprove && status==='en_attente'){
-      myActionBtn = '<button class="btn" style="background:var(--maroon);color:#fff;border:none;font-size:11px;padding:5px 12px;border-radius:6px;cursor:pointer;margin-top:8px" onclick="openValidation(\''+d.type+'\',{},'+(JSON.stringify(d.refLabel))+')">✍️ Valider maintenant</button>';
+    if((isA||(isD&&String(d.demandeurId)===String(CU.id)))&&getApprobStatut(d)==='en_attente'){
+      btn+='<button class="abe" style="color:#9CA3AF" onclick="annulerApprobation('+d.id+')" title="Annuler">🚫</button>';
     }
+    btn+='<button class="abe" onclick="voirDetailApprobation('+d.id+')" title="Détail">👁</button>';
+    return '<tr>'+
+      '<td style="font-family:monospace;font-size:10px;font-weight:700;color:var(--maroon)">'+(d.ref||'—')+'</td>'+
+      '<td><span style="font-size:14px;margin-right:4px">'+cfg.icon+'</span><strong style="font-size:11px">'+cfg.label+'</strong></td>'+
+      '<td style="font-size:11px;font-weight:600">'+d.demandeurNom+'</td>'+
+      '<td style="font-size:10px;color:var(--t3)">'+(d.service||'—')+'</td>'+
+      '<td style="font-size:11px;max-width:140px">'+getApprobResume(d)+'</td>'+
+      '<td style="font-size:10px;white-space:nowrap">'+fmtD2(d.createdAt)+'</td>'+
+      '<td style="text-align:center"><span style="background:'+st.bg+';color:'+st.color+';padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700">'+st.label+'</span></td>'+
+      '<td style="font-size:9px;color:var(--t3)">'+(d.approbateurNom?('✅ '+d.approbateurNom):(getApprobStatut(d)==='rejete'?'❌':'—'))+'</td>'+
+      '<td><div class="ab-row">'+btn+'</div></td>'+
+    '</tr>';
+  }).join(''):'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--t3)">Aucune demande d\'approbation</td></tr>';
 
-    return '<div class="approb-card" style="background:#fff;border:1px solid var(--bd);border-radius:10px;padding:14px;box-shadow:0 1px 4px rgba(139,26,26,.06)">' +
-      '<div style="display:flex;align-items:flex-start;gap:12px">' +
-        '<div style="width:38px;height:38px;border-radius:9px;background:'+cfg.color+'22;color:'+cfg.color+';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">'+cfg.icon+'</div>' +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">' +
-            '<span style="font-weight:700;font-size:12px;color:var(--maroon)">'+cfg.label+'</span>' +
-            statusBadge +
-          '</div>' +
-          '<div style="font-size:11px;color:var(--t2);margin-bottom:3px">'+d.refLabel+'</div>' +
-          '<div style="font-size:9.5px;color:var(--t3)">'+
-            'Créé le '+(d.createdAt?new Date(d.createdAt).toLocaleDateString('fr-FR'):'—')+
-            (d.createdBy?' par <strong>'+d.createdBy+'</strong>':'') +
-          '</div>' +
-          '<div style="font-size:9px;color:var(--t3);margin-top:4px">'+(d.steps?d.steps.length:0)+' validation(s) / '+required.length+' requise(s)</div>' +
-          stepsHtml +
-          myActionBtn +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
+  body.innerHTML=
+    '<div style="font-size:10px;color:var(--t2);margin-bottom:10px;padding:8px 10px;background:#F9F5EE;border-radius:7px;border:1px solid #e8d5b0">'+
+    'Même circuit que les <strong>demandes de course</strong> : soumission → e-mail aux approbateurs → validation ✅ / rejet ❌ depuis ce tableau.'+
+    '</div>'+
+    '<div class="tw"><table><thead><tr>'+
+    '<th>Réf.</th><th>Type</th><th>Demandeur</th><th>Service</th><th>Résumé</th><th>Date</th><th>Statut</th><th>Approbateur</th><th>Actions</th>'+
+    '</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 
 
 // Badge update
 function updApprobBadge(){
-  var bc = document.getElementById('bdg-approb');
+  var bc=document.getElementById('bdg-approb');
   if(!bc) return;
-  var pending = gApprob().filter(function(d){ return d.isDossier && getDossierStatus(d)==='en_attente'; }).length;
-  bc.textContent = pending;
-  bc.style.display = pending > 0 ? '' : 'none';
+  var pending=getVisibleApprobations().filter(function(d){return getApprobStatut(d)==='en_attente';}).length;
+  bc.textContent=pending;
+  bc.style.display=pending>0?'':'none';
 }
 
 // Conservé pour compatibilité — délègue aux autres approbateurs uniquement
@@ -23125,13 +23298,19 @@ var STATUTS = {
       setTimeout(function(){ showPage('demandes-course'); }, 200);
     }
 
-    // Pour l'approbateur : voir demandes + historique seulement
+    // Pour l'approbateur : demandes de course + validations opérationnelles (Comptes)
     if(acc.role === 'approbateur'){
       document.querySelectorAll('.sbi[data-p]').forEach(function(el){
         var p = el.getAttribute('data-p');
-        var allowed = ['demandes-course', 'dashboard', 'history'];
+        var allowed = ['demandes-course', 'accounts', 'dashboard', 'history'];
         el.style.display = allowed.indexOf(p) >= 0 ? '' : 'none';
       });
+      var accNav=document.querySelector('.sbi[data-p="accounts"]');
+      if(accNav){
+        accNav.style.display='';
+        var lbl=accNav.querySelector('span:not(.sbic):not(.sb-badge)');
+        if(lbl) lbl.textContent='Validations à traiter';
+      }
       setTimeout(function(){ showPage('demandes-course'); }, 200);
     }
 

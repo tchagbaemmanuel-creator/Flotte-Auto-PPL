@@ -163,6 +163,13 @@ async function applyKeyUpdate(key, value, user) {
     } catch (e) {
       console.error('[NOTIF]', e.message);
     }
+  } else if (key === 'p5_approb' && Array.isArray(value)) {
+    try {
+      const withFlags = await notifications.onApprobationsUpdated(prev, value, DB);
+      if (withFlags) next = withFlags;
+    } catch (e) {
+      console.error('[NOTIF]', e.message);
+    }
   } else {
     next = value;
   }
