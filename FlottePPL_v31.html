@@ -1666,7 +1666,7 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="rc"><div class="rc-ico">📋</div><div class="rc-title">Ordres de Mission</div><div class="rc-desc">Tous les OM émis avec dotations carburant calculées.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('missions')">📄 PDF</button><button class="btn bxls" onclick="xXLS('missions')">📊 Excel</button></div></div>
     <div class="rc"><div class="rc-ico">👤</div><div class="rc-title">Rapport Conducteurs</div><div class="rc-desc">Profils, permis et validités des conducteurs.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('drivers')">📄 PDF</button><button class="btn bxls" onclick="xXLS('drivers')">📊 Excel</button></div></div>
     <div class="rc"><div class="rc-ico">🔧</div><div class="rc-title">Rapport Maintenance</div><div class="rc-desc">Planning d'entretien, révisions et coûts.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('maint')">📄 PDF</button><button class="btn bxls" onclick="xXLS('maint')">📊 Excel</button></div></div>
-    <div class="rc"><div class="rc-ico">⛽</div><div class="rc-title">Rapport Carburant</div><div class="rc-desc">Consommation, dotations et coûts carburant.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('fuel')">📄 PDF</button><button class="btn bxls" onclick="xXLS('fuel')">📊 Excel</button></div></div>
+    <div class="rc"><div class="rc-ico">⛽</div><div class="rc-title">Rapport Carburant</div><div class="rc-desc">Consommation (litrage), dotations et coûts carburant.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('fuel')">📄 PDF</button><button class="btn bxls" onclick="xXLS('fuel')">📊 Excel</button></div></div>
     <div class="rc" style="border-color:rgba(200,168,75,.3)"><div class="rc-ico">📑</div><div class="rc-title">Rapport Général Complet</div><div class="rc-desc">Rapport consolidé — tous les modules en un seul fichier.</div><div class="rc-btns"><button class="btn bpdf" onclick="xPDF('full')">📄 PDF Complet</button><button class="btn bxls" onclick="xXLS('full')">📊 Excel Complet</button></div></div>
   </div>
 </div>
@@ -3208,7 +3208,6 @@ textarea.fi{resize:vertical;min-height:50px;}
   </div>
   <div class="mf">
     <button class="btn bg" onclick="closeM('addfuel');(function(){var _e=document.getElementById('af-edit-id');if(_e)_e.value='';var _t=document.getElementById('fuel-modal-title');if(_t)_t.textContent='⛽ Saisir un plein de carburant';})()">Annuler</button>
-    <button class="btn" style="background:#10B981;color:#fff;border:none;font-size:11px;padding:7px 12px;border-radius:7px;cursor:pointer" onclick="requestApproval('carburant_rechargement')" title="Notifier les autres approbateurs par e-mail">✍️ Approbation Carte</button>
     <button class="btn bp" id="af-save-btn" onclick="saveF()">✓ Enregistrer</button>
   </div>
 </div></div>
@@ -15822,13 +15821,13 @@ function switchFuelTab(tab){
           }).join('')+'</tbody></table>'+
         '</div>'+
       '</div>'+
-      // Par véhicule — top 10
+      // Par véhicule — toutes les opérations agrégées
       '<div class="card">'+
         '<div class="ch"><div class="ct"><span class="dot" style="background:var(--r)"></span>🚘 Top consommation par véhicule</div></div>'+
         '<div class="tw"><table><thead><tr>'+
           '<th>Véhicule</th><th>Nb opérations</th><th>Total litres</th><th>Total coût (FCFA)</th><th>Coût moyen / op</th>'+
         '</tr></thead><tbody>'+
-        Object.values(byVehicle).sort(function(a,b){return b.cost-a.cost;}).slice(0,10).map(function(v){
+        Object.values(byVehicle).sort(function(a,b){return b.cost-a.cost;}).map(function(v){
           return '<tr>'+
             '<td><div class="vp" style="font-size:10px">'+v.plate+'</div></td>'+
             '<td style="text-align:center;font-family:monospace">'+v.n+'</td>'+
@@ -16417,7 +16416,7 @@ function renderFuelMonthlyChart(){
     if(months[key][t]!==undefined) months[key][t]+=(f.liters||0);
     else months[key].autre = (months[key].autre||0)+(f.liters||0);
   });
-  var sortedKeys = Object.keys(months).sort().slice(-12); // 12 derniers mois
+  var sortedKeys = Object.keys(months).sort();
 
   // Tableau récapitulatif mensuel
   var tableEl = document.getElementById('fuel-monthly-table');
@@ -23476,6 +23475,11 @@ window.renderDemandesPage = function(){
     } else if(!isAdmin && !isApprob && d.demandeurId == (cu?cu.id:0) && d.statut==='en_attente'){
       actionBtns += '<button class="abe" style="color:#9CA3AF" onclick="annulerDemande('+d.id+')" title="Annuler">🚫</button>';
     }
+    // Demandeur : peut modifier sa demande même après approbation.
+    // Toute modification repasse la demande en attente d'approbation.
+    if(!isAdmin && !isApprob && d.demandeurId == (cu?cu.id:0) && ['en_attente','approuve','rejete'].indexOf(d.statut) >= 0){
+      actionBtns += '<button class="abe" style="color:#1D4ED8" onclick="modifierDemande('+d.id+')" title="Modifier">✏️</button>';
+    }
     actionBtns +=
       '<button class="abe" onclick="voirDetailDemande('+d.id+')" title="Voir détail">👁</button>';
 
@@ -23533,6 +23537,35 @@ window.openNouvelleDemandeModal = function(){
   mo.classList.add('open');
 };
 
+window.modifierDemande = function(id){
+  var demandes = gDemandes();
+  var d = demandes.find(function(x){ return x.id===id; });
+  var cu = (typeof CU !== 'undefined') ? CU : null;
+  if(!d || !cu) return;
+  var isOwner = String(d.demandeurId) === String(cu.id);
+  if(!isOwner){
+    if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
+    return;
+  }
+  if(['termine','annule','en_cours'].indexOf(d.statut) >= 0){
+    if(typeof showT==='function') showT('⚠️ Cette demande n\'est plus modifiable','w');
+    return;
+  }
+  window.openNouvelleDemandeModal();
+  document.getElementById('dem-edit-id').value = d.id;
+  document.getElementById('dem-modal-title').textContent = '✏️ Modifier la demande de course';
+  document.getElementById('dem-nom').value = d.demandeurNom || (cu ? cu.name : '');
+  document.getElementById('dem-service').value = d.service || (cu ? (cu.dept||'') : '');
+  document.getElementById('dem-date-depart').value = d.dateDepart || '';
+  document.getElementById('dem-heure-depart').value = d.heureDepart || '';
+  document.getElementById('dem-destination').value = d.destination || '';
+  document.getElementById('dem-motif').value = d.motif || '';
+  document.getElementById('dem-passagers').value = d.passagers || 1;
+  document.getElementById('dem-urgence').value = d.urgence || 'normale';
+  document.getElementById('dem-notes').value = d.notes || '';
+  document.getElementById('dem-vehicule-pref').value = d.vehiculePref || '';
+};
+
 window.saveDemande = function(){
   var nom = document.getElementById('dem-nom').value.trim();
   var service = document.getElementById('dem-service').value.trim();
@@ -23557,6 +23590,8 @@ window.saveDemande = function(){
   var ref = 'DC-'+today+'-'+num;
   if(editId){ var ex = demandes.find(function(d){ return d.id===editId; }); if(ex) ref = ex.ref; }
 
+  var existing = editId ? demandes.find(function(d){return d.id===editId;}) : null;
+  var isEdit = !!existing;
   var obj = {
     id: editId || now,
     ref: ref,
@@ -23572,15 +23607,32 @@ window.saveDemande = function(){
     urgence: document.getElementById('dem-urgence').value,
     vehiculePref: document.getElementById('dem-vehicule-pref').value,
     notes: document.getElementById('dem-notes').value.trim(),
-    statut: editId ? (demandes.find(function(d){return d.id===editId;})||{}).statut||'en_attente' : 'en_attente',
-    createdAt: editId ? (demandes.find(function(d){return d.id===editId;})||{}).createdAt||new Date().toISOString() : new Date().toISOString(),
+    // Après modification, la demande repart en attente d'approbation.
+    statut: isEdit ? 'en_attente' : 'en_attente',
+    createdAt: isEdit ? existing.createdAt||new Date().toISOString() : new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+  if(isEdit){
+    if(String(existing.demandeurId) !== String(cu ? cu.id : 0)){
+      if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
+      return;
+    }
+    obj.dateApprobation = '';
+    obj.approbateurNom = '';
+    obj.approbateurId = 0;
+    obj.motifRejet = '';
+    obj.vehiculeAffecte = '';
+    obj.vehicleId = null;
+    obj.driverId = null;
+    obj.chauffeurNom = '';
+    obj.notesAffectation = '';
+    obj.dateAffectation = '';
+  }
 
-  if(editId){
+  if(isEdit){
     var idx = demandes.findIndex(function(d){ return d.id===editId; });
     if(idx>=0) demandes[idx]=obj; else demandes.push(obj);
-    if(typeof showT==='function') showT('✅ Demande modifiée','s');
+    if(typeof showT==='function') showT('✅ Demande modifiée — renvoyée en attente d\'approbation','s');
   } else {
     demandes.push(obj);
     if(typeof showT==='function') showT('✅ Demande soumise — en attente d\'approbation','s');
