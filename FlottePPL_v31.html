@@ -27407,7 +27407,7 @@ window.renderDemandesPage = function(){
   // Onglets
   var tab = window._pplT||'toutes';
   function mkT(key,lbl,n,c){
-    var on=tab===key,col=on?(c||'var(--maroon)'):'transparent',txt=on?(c||'var(--maroon)'):'var(--t3)';
+    var on=tab===key,col=on?(c||'var(--maroon)'):'transparent',txt=on?(c||'var(--maroon)'):(key==='historique'?(c||'#1D4ED8'):'var(--t3)');
     return '<button onclick="window._pplT=\''+key+'\';renderDemandesPage()" style="padding:9px 16px;background:none;border:none;border-bottom:2px solid '+col+';color:'+txt+';font-weight:'+(on?700:400)+';cursor:pointer;font-size:12px;margin-bottom:-2px;white-space:nowrap">'+
       lbl+(n!=null?' <span style="background:'+(on?(c||'var(--maroon)'):'#E5E7EB')+';color:'+(on?'#fff':'#6B7280')+';padding:1px 7px;border-radius:99px;font-size:10px;margin-left:4px">'+n+'</span>':'')+
     '</button>';
@@ -27544,6 +27544,7 @@ function _html(vis,cu,isA,isP,isD){
     _tb('toutes','\uD83D\uDCCB Toutes',vis.length,null,tab)+
     _tb('attente','\u23F3 En attente',att.length,'#F59E0B',tab)+
     _tb('urgentes','\uD83D\uDEA8 Urgentes',urg.length,'#DC2626',tab)+
+    _tb('historique','\uD83D\uDCC5 Historique',vis.length,'#1D4ED8',tab)+
     ((isA||isP)?_tb('config','\u2699\uFE0F Configuration',null,'var(--gold)',tab):'')+
   '</div>';
 
@@ -27559,7 +27560,7 @@ function _html(vis,cu,isA,isP,isD){
 }
 
 function _tb(key,label,n,c,tab){
-  var on=tab===key,col=on?(c||'var(--maroon)'):'transparent',txt=on?(c||'var(--maroon)'):'var(--t3)';
+  var on=tab===key,col=on?(c||'var(--maroon)'):'transparent',txt=on?(c||'var(--maroon)'):(key==='historique'?(c||'#1D4ED8'):'var(--t3)');
   return '<button data-ppl-tab="'+key+'" onclick="window._pplT=\''+key+'\';window.renderDemandesPage()" style="padding:9px 16px;background:none;border:none;border-bottom:2px solid '+col+';color:'+txt+';font-weight:'+(on?700:400)+';cursor:pointer;font-size:12px;margin-bottom:-2px;white-space:nowrap">'+
     label+(n!==null?'<span style="margin-left:5px;background:'+(on?(c||'var(--maroon)'):'#9CA3AF')+';color:#fff;border-radius:99px;padding:1px 7px;font-size:9px">'+n+'</span>':'')+
   '</button>';
