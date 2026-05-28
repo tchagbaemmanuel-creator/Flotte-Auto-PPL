@@ -27567,6 +27567,7 @@ function _tb(key,label,n,c,tab){
 }
 
 function _table(list,cu,isA,isP,title){
+  var isD=!isA&&!isP;
   var fD=function(s){if(!s)return '\u2014';try{return new Date(s).toLocaleDateString('fr-FR');}catch(e){return s;}};
   var SL={en_attente:'En attente',approuve:'Approuv\u00e9e',rejete:'Rejet\u00e9e',en_cours:'En cours',termine:'Termin\u00e9e',annule:'Annul\u00e9e'};
   var SC={en_attente:'#F59E0B',approuve:'#059669',rejete:'#DC2626',en_cours:'#3B82F6',termine:'#6B7280',annule:'#9CA3AF'};
@@ -27575,6 +27576,7 @@ function _table(list,cu,isA,isP,title){
     var b='';
     if((isA||isP)&&d.statut==='en_attente')b+='<button class="abe" style="color:#059669" onclick="approuverDemande('+d.id+')" title="Approuver">\u2705</button><button class="abe" style="color:#DC2626" onclick="rejeterDemande('+d.id+')" title="Rejeter">\u274C</button>';
     if(isA&&(d.statut==='approuve'||d.statut==='en_attente'))b+='<button class="abe" style="color:#1D4ED8" onclick="affecterVehicule('+d.id+')" title="Affecter">\uD83D\uDE97</button>';
+    if(isD&&String(d.demandeurId)===String(cu.id)&&['en_attente','approuve','rejete'].indexOf(d.statut)>=0)b+='<button class="abe" style="color:#1D4ED8" onclick="modifierDemande('+d.id+')" title="Modifier">\u270F\uFE0F</button>';
     b+='<button class="abe" onclick="voirDetailDemande('+d.id+')" title="D\u00e9tail">\uD83D\uDC41</button>';
     return '<tr>'+
       '<td style="font-family:monospace;font-size:10px;color:var(--maroon);font-weight:700">'+(d.typeUrgent?'\uD83D\uDEA8 ':'')+d.ref+'</td>'+
