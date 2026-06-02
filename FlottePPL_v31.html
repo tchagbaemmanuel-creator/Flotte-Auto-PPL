@@ -4615,16 +4615,45 @@ function mergeAccountsFromServer(incoming) {
   if (!Array.isArray(incoming)) return incoming;
   var local = [];
   try { local = load(K.accounts) || []; } catch (e) { local = []; }
+  // Garde-fou : ne JAMAIS écraser des comptes locaux par une liste serveur vide.
+  if (incoming.length === 0 && local.length > 0) return local;
   var byUser = {};
   local.forEach(function (a) {
     if (a && a.username) byUser[String(a.username).trim().toLowerCase()] = a;
   });
-  return incoming.map(function (srv) {
+  // Comptes serveur (clé username normalisée) pour détecter les comptes locaux absents.
+  var srvUsers = {};
+  incoming.forEach(function (a) {
+    if (a && a.username) srvUsers[String(a.username).trim().toLowerCase()] = true;
+  });
+  var merged = incoming.map(function (srv) {
     if (!srv || !srv.username) return srv;
     var loc = byUser[String(srv.username).trim().toLowerCase()];
     if (loc && loc.password && !srv.password) return Object.assign({}, srv, { password: loc.password });
     return srv;
   });
+  // Conserver les comptes présents en local mais absents du serveur
+  // (évite la perte massive quand un poste pousse une liste partielle/par défaut),
+  // SAUF les comptes par défaut « vierges » : on ne veut pas les renvoyer au serveur.
+  local.forEach(function (loc) {
+    if (loc && loc.username && !srvUsers[String(loc.username).trim().toLowerCase()] && !_isPristineDefaultAcc(loc)) {
+      merged.push(loc);
+    }
+  });
+  return merged;
+}
+
+/** Vrai si le compte local correspond exactement à un compte par défaut non modifié. */
+function _isPristineDefaultAcc(a) {
+  if (!a || !a.username) return false;
+  for (var i = 0; i < DEF_ACC.length; i++) {
+    var d = DEF_ACC[i];
+    if (String(d.username).toLowerCase() === String(a.username).toLowerCase() &&
+        d.password === a.password && d.role === a.role) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Fusionne les demandes de course — conserve l'historique même si un autre agent synchronise. */
@@ -4921,7 +4950,12 @@ function initData(){
   if(!load(K.fuel))save(K.fuel,[]);
   if(!load(K.docs))save(K.docs,[]);
   if(!load(K.logs))save(K.logs,[]);
-  if(!load(K.accounts)||!load(K.accounts).length)save(K.accounts,DEF_ACC);
+  if(!load(K.accounts)||!load(K.accounts).length){
+    // Amorçage LOCAL uniquement : on N'ENVOIE JAMAIS les comptes par défaut au serveur.
+    // (Un navigateur vierge ne doit pas écraser les vrais comptes existants côté serveur.)
+    try{ localStorage.setItem(K.accounts, JSON.stringify(DEF_ACC)); delete window._pplIdbCache[K.accounts]; }
+    catch(e){ save(K.accounts,DEF_ACC); }
+  }
   // Init extended collections
   if(!load(Kl.locations))save(Kl.locations,[]);
   if(!load(Kl.prestataires)||!load(Kl.prestataires).length)save(Kl.prestataires,DEF_PREST||[]);
@@ -19142,7 +19176,7 @@ function getVisibleApprobations(){
     });
   }
   return list.filter(function(d){
-    return String(d.demandeurId)===String(CU.id)||d.demandeurNom===CU.name;
+    return String(d.demandeurId)===String(CU.id)||(d.demandeurNom||'').trim().toLowerCase()===(CU.name||'').trim().toLowerCase();
   });
 }
 
@@ -23398,7 +23432,7 @@ window.renderDemandesPage = function(){
   } else {
     // Demandeur / Lecteur / Opérateur : uniquement ses propres demandes
     visible = demandes.filter(function(d){
-      return String(d.demandeurId) === String(cu.id) || d.demandeurNom === cu.name;
+      return String(d.demandeurId) === String(cu.id) || (d.demandeurNom||'').trim().toLowerCase() === (cu.name||'').trim().toLowerCase();
     });
   }
 
@@ -27380,7 +27414,7 @@ window.renderDemandesPage = function(){
     });
   } else {
     vis = demandes.filter(function(d){
-      return String(d.demandeurId)===String(cu.id)||d.demandeurNom===cu.name;
+      return String(d.demandeurId)===String(cu.id)||(d.demandeurNom||'').trim().toLowerCase()===(cu.name||'').trim().toLowerCase();
     });
   }
 

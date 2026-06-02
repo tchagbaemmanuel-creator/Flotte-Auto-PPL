@@ -142,6 +142,31 @@ function persistKeyToMongo(key) {
  * - Déclenche les e-mails via lib/notifications.js
  * - Met à jour DB[key] et marque la clé pour flush Mongo
  */
+/**
+ * Fusion défensive des comptes (p5_ac / p5_accounts).
+ * Objectif : empêcher la perte massive de comptes lorsqu'un poste pousse une
+ * liste vide ou partielle (ex. comptes par défaut d'un nouveau navigateur).
+ * - Liste vide entrante + comptes existants  → on conserve l'existant.
+ * - Suppression de plus d'1 compte d'un coup  → on préserve les comptes absents.
+ * - Sinon (ajout, édition, suppression unitaire) → on accepte la liste entrante.
+ */
+function mergeAccounts(prev, incoming) {
+  if (!Array.isArray(incoming)) return incoming;
+  const prevArr = Array.isArray(prev) ? prev : [];
+  if (incoming.length === 0 && prevArr.length > 0) {
+    console.warn('[ACCOUNTS] Mise à jour vide ignorée — comptes existants conservés.');
+    return prevArr;
+  }
+  const userKey = (a) => (a && a.username ? String(a.username).trim().toLowerCase() : null);
+  const inUsers = new Set(incoming.map(userKey).filter(Boolean));
+  const missing = prevArr.filter((a) => { const k = userKey(a); return k && !inUsers.has(k); });
+  if (missing.length > 1) {
+    console.warn(`[ACCOUNTS] Suppression massive bloquée (${missing.length} comptes absents) — fusion préservante.`);
+    return incoming.concat(missing);
+  }
+  return incoming;
+}
+
 async function applyKeyUpdate(key, value, user) {
   const prev = DB[key];
   let next = value;
@@ -170,6 +195,8 @@ async function applyKeyUpdate(key, value, user) {
     } catch (e) {
       console.error('[NOTIF]', e.message);
     }
+  } else if ((key === 'p5_ac' || key === 'p5_accounts') && Array.isArray(value)) {
+    next = mergeAccounts(prev, value);
   } else {
     next = value;
   }
