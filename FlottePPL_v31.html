@@ -23486,7 +23486,7 @@ window.gDemandes = gDemandes; }catch(e){ return []; } };
 function saveDemandes(arr){
   var merged = mergeDemandesCourse(gDemandes(), arr);
   localStorage.setItem(K_DEMANDES, JSON.stringify(merged));
-  if(typeof pushToServer==='function' && typeof _socket!=='undefined' && _socket && _socket.connected){
+  if(typeof pushToServer==='function'){
     try{ pushToServer(K_DEMANDES, merged); }catch(e){}
   }
   return merged;
@@ -23772,7 +23772,8 @@ window.modifierDemande = function(id){
   var d = demandes.find(function(x){ return x.id===id; });
   var cu = (typeof CU !== 'undefined') ? CU : null;
   if(!d || !cu) return;
-  var isOwner = String(d.demandeurId) === String(cu.id);
+  var isOwner = String(d.demandeurId) === String(cu.id) ||
+    (d.demandeurNom||'').trim().toLowerCase() === (cu.name||'').trim().toLowerCase();
   if(!isOwner){
     if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
     return;
@@ -23804,9 +23805,15 @@ window.saveDemande = function(){
   var destination = document.getElementById('dem-destination').value.trim();
   var motif = document.getElementById('dem-motif').value.trim();
   var cu = (typeof CU !== 'undefined') ? CU : null;
+  var urgenceVal = document.getElementById('dem-urgence').value;
+  var isUrgente = urgenceVal === 'urgente';
 
   if(!nom||!dateDepart||!destination||!motif){
     if(typeof showT==='function') showT('⚠️ Nom, date, destination et motif sont obligatoires','w');
+    return;
+  }
+  if(isUrgente && typeof window._PPL_canCreateUrgente==='function' && !window._PPL_canCreateUrgente(cu)){
+    if(typeof showT==='function') showT('⛔ Plafond mensuel de courses urgentes atteint. Utilisez l\'onglet Urgentes ou contactez l\'administrateur.','w');
     return;
   }
 
@@ -23817,8 +23824,13 @@ window.saveDemande = function(){
   // Générer la référence
   var today = new Date().toISOString().split('T')[0].replace(/-/g,'');
   var num = (demandes.length+1).toString().padStart(4,'0');
-  var ref = 'DC-'+today+'-'+num;
+  var ref = isUrgente && !editId ? 'URG-'+new Date().toISOString().replace(/\D/g,'').slice(0,14)+'-'+num : 'DC-'+today+'-'+num;
   if(editId){ var ex = demandes.find(function(d){ return d.id===editId; }); if(ex) ref = ex.ref; }
+
+  var accs = (typeof gAcc==='function') ? gAcc() : [];
+  var me = cu ? accs.find(function(a){ return String(a.id)===String(cu.id) || (a.username&&cu.username&&String(a.username).toLowerCase()===String(cu.username).toLowerCase()); }) : null;
+  var appId = me ? (me.approbateurId||0) : 0;
+  var app = appId ? accs.find(function(a){ return String(a.id)===String(appId); }) : null;
 
   var existing = editId ? demandes.find(function(d){return d.id===editId;}) : null;
   var isEdit = !!existing;
@@ -23834,16 +23846,20 @@ window.saveDemande = function(){
     destination: destination,
     motif: motif,
     passagers: parseInt(document.getElementById('dem-passagers').value)||1,
-    urgence: document.getElementById('dem-urgence').value,
+    urgence: urgenceVal,
+    typeUrgent: isUrgente,
     vehiculePref: document.getElementById('dem-vehicule-pref').value,
     notes: document.getElementById('dem-notes').value.trim(),
-    // Après modification, la demande repart en attente d'approbation.
+    approbateurId: appId,
+    approbateurNom: app ? app.name : 'Admin',
     statut: isEdit ? 'en_attente' : 'en_attente',
     createdAt: isEdit ? existing.createdAt||new Date().toISOString() : new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
   if(isEdit){
-    if(String(existing.demandeurId) !== String(cu ? cu.id : 0)){
+    var canEditOwn = String(existing.demandeurId) === String(cu ? cu.id : 0) ||
+      (existing.demandeurNom||'').trim().toLowerCase() === (cu && cu.name ? cu.name : '').trim().toLowerCase();
+    if(!canEditOwn){
       if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
       return;
     }
@@ -24204,6 +24220,7 @@ function injectDemandesPage(){
       '<div class="tr">'+
         ((!isDemandeur) ? '<button class="btn bpdf" onclick="xPDF(\'demandes\')" style="font-size:11px">📄 PDF</button><button class="btn bxls" onclick="xXLS(\'demandes\')" style="font-size:11px">📊 Excel</button>' : '')+
         '<button class="btn bp" onclick="openNouvelleDemandeModal()">+ Nouvelle demande</button>'+
+        (isDemandeur||isApprob?'<button class="btn" onclick="window._PPL_openUrgente&&window._PPL_openUrgente()" style="background:#DC2626;color:#fff;border:none;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;cursor:pointer">\uD83D\uDEA8 Course urgente</button>':'')+
       '</div>'+
     '</div>'+
     // Bandeau info pour demandeur
@@ -24245,8 +24262,9 @@ function injectDemandesPage(){
             '<select class="fi" id="dem-urgence">'+
               '<option value="normale">🟢 Normale</option>'+
               '<option value="haute">🟡 Haute</option>'+
-              '<option value="urgente">🔴 Urgente</option>'+
+              '<option value="urgente">🔴 Urgente (course prioritaire)</option>'+
             '</select>'+
+            '<div style="font-size:9px;color:var(--t3);margin-top:4px">Pour une urgence imprévue, utilisez aussi le bouton <strong>🚨 Course urgente</strong> en haut de page.</div>'+
           '</div>'+
           '<div class="fg"><label class="fl">Véhicule souhaité <span style="font-size:9px;color:var(--t3)">(optionnel)</span></label>'+
             '<input class="fi" id="dem-vehicule-pref" placeholder="ex: 4×4, bus, berline...">'+
@@ -27515,7 +27533,29 @@ function gCC(){try{return Object.assign({plafond:5,actif:false},JSON.parse(local
 function sCC(c){localStorage.setItem(K_CC,JSON.stringify(c));}
 function sid(a,b){return a!=null&&b!=null&&String(a)!==''&&String(b)!==''&&String(a)===String(b);}
 function collabsDe(appId){return gAccL().filter(function(u){return u.active!==false&&u.approbateurId&&sid(u.approbateurId,appId);});}
-function nbUrg(uid){var now=new Date();return gDemandesL().filter(function(d){return d.typeUrgent&&['annule','rejete'].indexOf(d.statut)<0&&sid(d.demandeurId,uid)&&(function(){var t=new Date(d.createdAt||d.dateDepart||'');return t.getMonth()===now.getMonth()&&t.getFullYear()===now.getFullYear();})();}).length;}
+function _demIsUrgente(d){return d&&(d.typeUrgent===true||d.urgence==='urgente');}
+function _demBelongsToUser(d,cu){
+  if(!d||!cu)return false;
+  if(sid(d.demandeurId,cu.id))return true;
+  return (d.demandeurNom||'').trim().toLowerCase()===(cu.name||'').trim().toLowerCase();
+}
+function nbUrg(uid,cu){
+  var now=new Date();
+  var user=cu||(typeof CU!=='undefined'?CU:null);
+  return gDemandesL().filter(function(d){
+    if(!_demIsUrgente(d)||['annule','rejete'].indexOf(d.statut)>=0)return false;
+    var match=user?_demBelongsToUser(d,user):sid(d.demandeurId,uid);
+    if(!match)return false;
+    try{var t=new Date(d.createdAt||d.dateDepart||'');return t.getMonth()===now.getMonth()&&t.getFullYear()===now.getFullYear();}catch(e){return false;}
+  }).length;
+}
+window._PPL_canCreateUrgente=function(cu){
+  if(!cu)return false;
+  if(cu.role==='admin'||cu.role==='manager')return true;
+  var cfg=gCC();
+  if(!cfg.actif)return true;
+  return nbUrg(cu.id,cu)<cfg.plafond;
+};
 
 // ── ACCÈS PAR RÔLE ────────────────────────────────────────────────────
 var ROLE_PAGES={
@@ -27629,7 +27669,7 @@ window.renderDemandesPage = function(){
 
   // Bandeau plafond
   if(isD&&cfg.actif){
-    var nb=(typeof nbUrg==='function')?nbUrg(cu.id):0;
+    var nb=(typeof nbUrg==='function')?nbUrg(cu.id,cu):0;
     var pct=Math.min(100,Math.round(nb/cfg.plafond*100));
     var bC=pct>=100?'#DC2626':pct>=80?'#F59E0B':'#059669';
     h+='<div style="background:'+(pct>=100?'#FEF2F2':'#FEF3C7')+';border:1px solid '+(pct>=100?'#FECACA':'#FCD34D')+';border-radius:9px;padding:11px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px">'+
@@ -27735,7 +27775,7 @@ window.renderDemandesPage = function(){
     h+='<div class="card">'+
       '<div class="ch">'+
         '<div class="ct"><span class="dot"></span>'+titre+'</div>'+
-        (isA?'<button onclick="window._PPL_openUrgente&&window._PPL_openUrgente()" style="background:#DC2626;color:#fff;border:none;border-radius:7px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:700">\uD83D\uDEA8 Course urgente</button>':'')+
+        ((isA||isD)?'<button onclick="window._PPL_openUrgente&&window._PPL_openUrgente()" style="background:#DC2626;color:#fff;border:none;border-radius:7px;padding:6px 12px;cursor:pointer;font-size:11px;font-weight:700">\uD83D\uDEA8 Course urgente</button>':'')+
       '</div>'+
       flts+
       '<div class="tw"><table><thead><tr>'+
@@ -27773,7 +27813,7 @@ function _html(vis,cu,isA,isP,isD){
     _kc('Rejet\u00e9es',vis.filter(function(d){return d.statut==='rejete';}).length,'#6B7280')+'</div>';
 
   // Bandeau plafond
-  if(isD&&cfg.actif){var nb=nbUrg(cu.id),pct=Math.min(100,Math.round(nb/cfg.plafond*100)),bC=pct>=100?'#DC2626':pct>=80?'#F59E0B':'#059669';h+='<div style="background:'+(pct>=100?'#FEF2F2':'#FEF3C7')+';border:1px solid '+(pct>=100?'#FECACA':'#FCD34D')+';border-radius:9px;padding:11px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:22px">\uD83D\uDEA8</span><div style="flex:1"><div style="font-size:11px;font-weight:700;color:'+(pct>=100?'#DC2626':'#92400E')+'">Urgentes ce mois : '+nb+' / '+cfg.plafond+'</div><div style="background:#F0E8D8;border-radius:99px;height:7px;margin-top:4px;overflow:hidden"><div style="height:100%;background:'+bC+';width:'+pct+'%;border-radius:99px"></div></div></div>'+(pct>=100?'<div style="font-size:10px;color:#DC2626;font-weight:700">\u26D4 Plafond atteint</div>':'')+'</div>';}
+  if(isD&&cfg.actif){var nb=nbUrg(cu.id,cu),pct=Math.min(100,Math.round(nb/cfg.plafond*100)),bC=pct>=100?'#DC2626':pct>=80?'#F59E0B':'#059669';h+='<div style="background:'+(pct>=100?'#FEF2F2':'#FEF3C7')+';border:1px solid '+(pct>=100?'#FECACA':'#FCD34D')+';border-radius:9px;padding:11px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:22px">\uD83D\uDEA8</span><div style="flex:1"><div style="font-size:11px;font-weight:700;color:'+(pct>=100?'#DC2626':'#92400E')+'">Urgentes ce mois : '+nb+' / '+cfg.plafond+'</div><div style="background:#F0E8D8;border-radius:99px;height:7px;margin-top:4px;overflow:hidden"><div style="height:100%;background:'+bC+';width:'+pct+'%;border-radius:99px"></div></div></div>'+(pct>=100?'<div style="font-size:10px;color:#DC2626;font-weight:700">\u26D4 Plafond atteint</div>':'')+'</div>';}
 
   // Onglets — utiliser data-tab au lieu d'onclick inline pour éviter les problèmes d'échappement
   h+='<div id="ppl-dem-tabs" style="display:flex;gap:0;border-bottom:2px solid var(--bd);margin-bottom:16px;overflow-x:auto">'+
@@ -27830,7 +27870,7 @@ function _table(list,cu,isA,isP,title){
 }
 
 function _tabUrg(urg,cu,isA,isP,isD,cfg){
-  var nb=isD?nbUrg(cu.id):0,canCreate=!isD||!cfg.actif||nb<cfg.plafond;
+  var nb=isD?nbUrg(cu.id,cu):0,canCreate=(typeof window._PPL_canCreateUrgente==='function')?window._PPL_canCreateUrgente(cu):(!isD||!cfg.actif||nb<cfg.plafond);
   var fD=function(s){if(!s)return '\u2014';try{return new Date(s).toLocaleDateString('fr-FR');}catch(e){return s;}};
   var SL={en_attente:'En attente',approuve:'Approuv\u00e9e',rejete:'Rejet\u00e9e',en_cours:'En cours',termine:'Termin\u00e9e',annule:'Annul\u00e9e'};
   var SC={en_attente:'#F59E0B',approuve:'#059669',rejete:'#DC2626',en_cours:'#3B82F6',termine:'#6B7280',annule:'#9CA3AF'};
@@ -27877,9 +27917,12 @@ window._PPL_sCfg=function(){
 // ── MODAL COURSE URGENTE ──────────────────────────────────────────────
 window._PPL_openUrgente=function(){
   var cu=(typeof CU!=='undefined')?CU:null;if(!cu)return;
-  var cfg=gCC();
-  if(cu.role!=='admin'&&cu.role!=='manager'&&cfg.actif&&nbUrg(cu.id)>=cfg.plafond){if(typeof showT==='function')showT('\u26D4 Plafond mensuel atteint. Contactez votre administrateur.','w');return;}
-  var vs=(typeof gV==='function')?gV().filter(function(v){return v.status==='dispo';}):[];
+  if(typeof window._PPL_canCreateUrgente==='function'&&!window._PPL_canCreateUrgente(cu)){
+    var cfg=gCC(),nb=nbUrg(cu.id,cu);
+    if(typeof showT==='function')showT('\u26D4 Plafond mensuel atteint ('+nb+'/'+cfg.plafond+'). Contactez votre administrateur.','w');
+    return;
+  }
+  var vs=(typeof gV==='function')?gV().filter(function(v){return v.status==='available'||v.status==='dispo';}):[];
   var vO='<option value="">— Aucune pr\u00e9f\u00e9rence —</option>'+vs.map(function(v){return '<option value="'+v.plate+'">'+v.plate+' \u2014 '+v.brand+' '+v.model+'</option>';}).join('');
   var now=new Date().toISOString().slice(0,16);
   var old=document.getElementById('ppl-mo-u');if(old)old.remove();
@@ -27910,24 +27953,30 @@ window._PPL_openUrgente=function(){
 
 window._PPL_submitUrgente=function(){
   var cu=(typeof CU!=='undefined')?CU:null;if(!cu)return;
+  if(typeof window._PPL_canCreateUrgente==='function'&&!window._PPL_canCreateUrgente(cu)){
+    if(typeof showT==='function')showT('\u26D4 Plafond mensuel de courses urgentes atteint.','w');return;
+  }
   var g=function(id){return document.getElementById(id);};
   var dtV=(g('ppl-u-dt')||{}).value||'';
   var dst=((g('ppl-u-dst')||{}).value||'').trim();
   var mot=((g('ppl-u-mot')||{}).value||'').trim();
   if(!dst||!mot){if(typeof showT==='function')showT('\u26A0\uFE0F Destination et motif obligatoires','w');return;}
   var accs=gAccL();
-  var me=accs.find(function(a){return sid(a.id,cu.id);});
+  var me=accs.find(function(a){
+    return sid(a.id,cu.id)||(a.username&&cu.username&&String(a.username).toLowerCase()===String(cu.username).toLowerCase());
+  });
   var appId=me?(me.approbateurId||0):0;
   var app=appId?accs.find(function(a){return sid(a.id,appId);}):null;
   var dems=(typeof gDemandes==='function')?gDemandes():[];
   var now2=(typeof uid==='function')?uid():Date.now();
   var ref='URG-'+new Date().toISOString().replace(/\D/g,'').slice(0,14)+'-'+String(dems.length+1).padStart(3,'0');
-  dems.push({id:now2,ref:ref,demandeurId:cu.id,demandeurNom:cu.name,service:cu.dept||'',dateDepart:dtV.split('T')[0]||'',heureDepart:dtV.split('T')[1]||'',destination:dst,motif:mot,passagers:parseInt(((g('ppl-u-pax')||{}).value)||1),urgence:'urgente',typeUrgent:true,vehiculePref:((g('ppl-u-veh')||{}).value||''),notes:((g('ppl-u-nts')||{}).value||''),approbateurId:appId,approbateurNom:app?app.name:'Admin',statut:'en_attente',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-  // Sauvegarde robuste: via saveDemandes si dispo, sinon localStorage direct
+  dems.push({id:now2,ref:ref,demandeurId:cu.id,demandeurNom:cu.name,service:(cu.dept||me&&me.dept)||'',dateDepart:dtV.split('T')[0]||'',heureDepart:dtV.split('T')[1]||'',destination:dst,motif:mot,passagers:parseInt(((g('ppl-u-pax')||{}).value)||1),urgence:'urgente',typeUrgent:true,vehiculePref:((g('ppl-u-veh')||{}).value||''),notes:((g('ppl-u-nts')||{}).value||''),approbateurId:appId,approbateurNom:app?app.name:'Admin',statut:'en_attente',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
   if(typeof saveDemandes==='function'){
     saveDemandes(dems);
+  } else if(typeof window.saveDemandes==='function'){
+    window.saveDemandes(dems);
   } else {
-    try{ localStorage.setItem(_K_DEM, JSON.stringify(dems)); }catch(e){}
+    try{ localStorage.setItem(_K_DEM, JSON.stringify(dems)); if(typeof pushToServer==='function')pushToServer(_K_DEM,dems); }catch(e){}
   }
   if(typeof addLog==='function')addLog('demande','\uD83D\uDEA8 Course urgente: '+ref+' \u2192 '+dst);
   var mo=document.getElementById('ppl-mo-u');if(mo)mo.remove();
