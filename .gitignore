@@ -3,6 +3,8 @@ data/flotte_data.json
 data/users.json
 *.log
 .env
+comptes-complets.json
+comptes-recuperes.json
 .DS_Store
 Thumbs.db
 *.tmp

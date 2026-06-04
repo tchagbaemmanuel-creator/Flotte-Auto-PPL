@@ -864,6 +864,12 @@ textarea.fi{resize:vertical;min-height:50px;}
   <div class="dp-body" id="dp-d-body"></div>
 </div>
 
+<!-- DETAIL ACCIDENT / SINISTRE -->
+<div class="dp" id="dp-acc">
+  <div class="dp-hdr"><div class="dp-title">🚨 Détails sinistre</div><button class="dp-close" onclick="closeDP('acc')">✕ Fermer</button></div>
+  <div class="dp-body" id="dp-acc-body"></div>
+</div>
+
 <!-- SIDEBAR -->
 <aside class="sb" id="sb" style="display:none">
   <div class="sb-logo" onclick="showPage('dashboard')">
@@ -2460,6 +2466,7 @@ textarea.fi{resize:vertical;min-height:50px;}
           <div class="emi" onclick="xXLS('accidents');closeEM()">📊 Excel</div>
         </div>
       </div>
+      <button class="btn bg" onclick="openAccBulkModal()">📋 Saisie multiple</button>
       <button class="btn bp" onclick="openM('add-accident')">+ Enregistrer accident / sinistre</button>
     </div>
   </div>
@@ -2470,7 +2477,8 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="sm"><div style="font-size:18px">💰</div><div><div class="smv" id="acc-cout-stat">0</div><div class="sml">Coût total FCFA</div></div></div>
   </div>
   <div class="card">
-    <div class="ch"><div class="ct"><span class="dot"></span>Registre des accidents et sinistres</div></div>
+    <div class="ch"><div class="ct"><span class="dot"></span>Registre des accidents et sinistres</div>
+      <div style="font-size:9.5px;color:var(--t3)">Cliquez sur une ligne pour ouvrir le détail sur le côté</div></div>
     <div class="tw"><table><thead><tr>
       <th>Réf.</th><th>Date</th><th>Véhicule</th><th>Conducteur</th><th>Type</th>
       <th>Lieu</th><th>Description</th><th>Déclaration assurance</th>
@@ -4196,6 +4204,37 @@ textarea.fi{resize:vertical;min-height:50px;}
   </div>
 </div></div>
 
+<!-- MODAL: SAISIE MULTIPLE SINISTRES -->
+<div class="mo" id="mo-acc-bulk" onclick="closeModOut(event,'acc-bulk')">
+<div class="md" style="max-width:min(1100px,96vw)" onclick="event.stopPropagation()">
+  <div class="mh"><div class="mtitle">📋 Enregistrer plusieurs sinistres</div><button class="mx" onclick="closeM('acc-bulk')">✕</button></div>
+  <div class="mb">
+    <div style="font-size:10.5px;color:var(--t2);line-height:1.6;margin-bottom:10px">
+      Renseignez une ligne par sinistre. Les champs <strong>Date</strong>, <strong>Type</strong> et <strong>Lieu</strong> sont obligatoires. Les références (SIN-…) seront générées automatiquement.
+    </div>
+    <div class="tw" style="max-height:55vh;overflow:auto">
+      <table style="min-width:900px">
+        <thead><tr>
+          <th style="width:32px">#</th>
+          <th>Date *</th>
+          <th>Véhicule</th>
+          <th>Conducteur</th>
+          <th>Type *</th>
+          <th>Lieu *</th>
+          <th>Description</th>
+          <th>Statut</th>
+          <th style="width:36px"></th>
+        </tr></thead>
+        <tbody id="acc-bulk-body"></tbody>
+      </table>
+    </div>
+    <button type="button" class="btn bg" style="margin-top:10px;font-size:11px" onclick="addAccBulkRow()">+ Ajouter une ligne</button>
+  </div>
+  <div class="mf">
+    <button class="btn bg" onclick="closeM('acc-bulk')">Annuler</button>
+    <button class="btn bp" onclick="saveAccBulkAll()">✓ Enregistrer tout</button>
+  </div>
+</div></div>
 
 <!-- MODAL: KILOMÉTRAGE HEBDOMADAIRE -->
 <div class="mo" id="mo-km-hebdo" onclick="closeModOut(event,'km-hebdo')">
@@ -10364,6 +10403,163 @@ function genAccRef(){
   return 'SIN-'+year+'-'+String(n).padStart(4,'0');
 }
 
+var ACC_TYPE_OPTS = '<option value="">— Type —</option>'+
+  '<option>Collision avec tiers</option><option>Collision sans tiers</option><option>Renversement</option>'+
+  '<option>Incendie</option><option>Vol / Tentative de vol</option><option>Dommages matériels</option>'+
+  '<option>Accident corporel</option><option>Autre</option>';
+
+var ACC_STATUT_OPTS = '<option value="declare">Déclaré</option><option value="encours">En cours</option>'+
+  '<option value="expertise">Expertise</option><option value="reparation">Réparation</option><option value="clos">Clôturé</option>';
+
+var ACC_STATUT_LABELS = {declare:'Déclaré',encours:'Traitement en cours',expertise:'En expertise',reparation:'En réparation',clos:'Clôturé'};
+var ACC_RESP_LABELS = {PPL:'PPL (conducteur responsable)',tiers:'Tiers responsable',partage:'Responsabilité partagée',inconnu:'À déterminer'};
+var ACC_VICT_LABELS = {non:'Aucun blessé',leger:'Blessures légères',grave:'Blessures graves',mortel:'Accident mortel'};
+
+function _accBulkVehicleOpts(){
+  return '<option value="">— Véhicule —</option>'+gV().map(function(v){
+    return '<option value="'+v.id+'">'+String(v.plate||'').replace(/</g,'')+'</option>';
+  }).join('');
+}
+function _accBulkDriverOpts(){
+  return '<option value="">— Conducteur —</option>'+gD().map(function(d){
+    return '<option value="'+d.id+'">'+String(d.name||'').replace(/</g,'')+'</option>';
+  }).join('');
+}
+
+function openAccBulkModal(){
+  var body=document.getElementById('acc-bulk-body');
+  if(!body){openM('acc-bulk');return;}
+  body.innerHTML='';
+  for(var i=0;i<3;i++) addAccBulkRow();
+  openM('acc-bulk');
+}
+
+function addAccBulkRow(){
+  var body=document.getElementById('acc-bulk-body');
+  if(!body)return;
+  var n=body.querySelectorAll('tr').length+1;
+  var tr=document.createElement('tr');
+  tr.innerHTML=
+    '<td style="font-size:10px;color:var(--t3);text-align:center">'+n+'</td>'+
+    '<td><input class="fi acc-bk-date" type="date" style="font-size:10px;padding:4px 6px"></td>'+
+    '<td><select class="fi acc-bk-veh" style="font-size:10px;padding:4px 6px">'+_accBulkVehicleOpts()+'</select></td>'+
+    '<td><select class="fi acc-bk-drv" style="font-size:10px;padding:4px 6px">'+_accBulkDriverOpts()+'</select></td>'+
+    '<td><select class="fi acc-bk-type" style="font-size:10px;padding:4px 6px">'+ACC_TYPE_OPTS+'</select></td>'+
+    '<td><input class="fi acc-bk-lieu" type="text" placeholder="Lieu" style="font-size:10px;padding:4px 6px"></td>'+
+    '<td><input class="fi acc-bk-desc" type="text" placeholder="Description" style="font-size:10px;padding:4px 6px"></td>'+
+    '<td><select class="fi acc-bk-stat" style="font-size:10px;padding:4px 6px">'+ACC_STATUT_OPTS+'</select></td>'+
+    '<td><button type="button" class="ab abr" onclick="this.closest(\'tr\').remove();_renumberAccBulkRows()" title="Supprimer la ligne">✕</button></td>';
+  body.appendChild(tr);
+}
+
+function _renumberAccBulkRows(){
+  var body=document.getElementById('acc-bulk-body');
+  if(!body)return;
+  body.querySelectorAll('tr').forEach(function(tr,i){
+    var c=tr.querySelector('td');
+    if(c) c.textContent=String(i+1);
+  });
+}
+
+function saveAccBulkAll(){
+  var body=document.getElementById('acc-bulk-body');
+  if(!body)return;
+  var rows=body.querySelectorAll('tr');
+  var accs=gAcc2().slice();
+  var year=new Date().getFullYear();
+  var added=0;
+  var skipped=0;
+  rows.forEach(function(tr){
+    var date=(tr.querySelector('.acc-bk-date')||{}).value||'';
+    var type=(tr.querySelector('.acc-bk-type')||{}).value||'';
+    var lieu=((tr.querySelector('.acc-bk-lieu')||{}).value||'').trim();
+    var desc=((tr.querySelector('.acc-bk-desc')||{}).value||'').trim();
+    if(!date&&!type&&!lieu&&!desc){
+      var veh0=(tr.querySelector('.acc-bk-veh')||{}).value;
+      if(!veh0){skipped++;return;}
+    }
+    if(!date||!type||!lieu){skipped++;return;}
+    var n=accs.filter(function(a){try{return new Date(a.date).getFullYear()===year;}catch(e){return false;}}).length+1;
+    var ref='SIN-'+year+'-'+String(n).padStart(4,'0');
+    accs.push({
+      id:uid(),ref:ref,
+      vehicleId:parseInt((tr.querySelector('.acc-bk-veh')||{}).value)||null,
+      driverId:parseInt((tr.querySelector('.acc-bk-drv')||{}).value)||null,
+      date:date,heure:'',lieu:lieu,type:type,
+      resp:'PPL',victimes:'non',desc:desc,dommages:'',
+      police:'',decl:'',dateDecl:'',cout:0,indem:0,
+      statut:(tr.querySelector('.acc-bk-stat')||{}).value||'declare',
+      docB64:'',obs:''
+    });
+    added++;
+  });
+  if(!added){
+    showT(skipped?'Aucune ligne valide (date, type et lieu requis par ligne)':'Ajoutez au moins une ligne','w');
+    return;
+  }
+  save(K_ACC,accs);
+  addLog('accident',added+' sinistre(s) enregistré(s) en masse');
+  closeM('acc-bulk');
+  renderAccidents();
+  showT(added+' sinistre(s) enregistré(s)'+(skipped?' ('+skipped+' ligne(s) ignorée(s))':''),'s');
+}
+
+function showAccDetail(id){
+  var a=gAcc2().find(function(x){return x.id===id;});
+  if(!a)return;
+  closeDP('v');closeDP('d');
+  var v=getV(a.vehicleId);
+  var d=getD(a.driverId);
+  var st=ACC_STATUT_LABELS[a.statut]||a.statut||'—';
+  var stCls={declare:'bo',encours:'bbl',expertise:'bgld',reparation:'bwarn',clos:'ba'}[a.statut]||'bo';
+  var docHtml='';
+  if(a.docB64){
+    if(a.docB64.indexOf('data:image')===0){
+      docHtml='<img src="'+a.docB64+'" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--bd);margin-top:6px;display:block">';
+    } else {
+      docHtml='<div style="margin-top:8px"><button class="btn bgold" style="font-size:11px" onclick="openAccDoc('+a.id+')">📄 Ouvrir le document</button></div>';
+    }
+  } else docHtml='<div style="font-size:10px;color:var(--t3);margin-top:4px">Aucun document joint</div>';
+  var esc=function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
+  document.getElementById('dp-acc-body').innerHTML=
+    '<div class="dp-hero">'+
+      '<div class="dp-photo" style="font-size:32px;background:#FEE2E2;border-radius:12px;width:64px;height:64px;display:flex;align-items:center;justify-content:center">🚨</div>'+
+      '<div style="flex:1">'+
+        '<div style="font-size:9px;color:var(--t3);font-family:monospace;margin-bottom:2px">'+esc(a.ref)+'</div>'+
+        '<div class="dp-nm" style="font-size:15px">'+esc(a.type)+'</div>'+
+        '<div class="dp-tags"><span class="badge '+stCls+'">'+esc(st)+'</span>'+
+        (v?'<span class="chip">'+esc(v.plate)+'</span>':'')+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--t2);margin-top:6px">📅 '+fmtD(a.date)+(a.heure?' · '+esc(a.heure):'')+' · 📍 '+esc(a.lieu)+'</div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="dp-sec"><div class="dp-sectl">🚘 Véhicule & conducteur</div><div class="dp-g2">'+
+      '<div class="dpf"><div class="dfl">Véhicule</div><div class="dfv">'+(v?esc(v.plate+' — '+v.brand+' '+v.model):'—')+'</div></div>'+
+      '<div class="dpf"><div class="dfl">Conducteur</div><div class="dfv">'+(d?esc(d.name):'—')+'</div></div>'+
+    '</div></div>'+
+    '<div class="dp-sec"><div class="dp-sectl">📋 Circonstances</div><div class="dp-g2">'+
+      '<div class="dpf"><div class="dfl">Responsabilité</div><div class="dfv">'+esc(ACC_RESP_LABELS[a.resp]||a.resp||'—')+'</div></div>'+
+      '<div class="dpf"><div class="dfl">Victimes / blessés</div><div class="dfv">'+esc(ACC_VICT_LABELS[a.victimes]||a.victimes||'—')+'</div></div>'+
+      '<div class="dpf full" style="grid-column:1/-1"><div class="dfl">Description des faits</div><div class="dfv" style="white-space:pre-wrap;line-height:1.5">'+esc(a.desc||'—')+'</div></div>'+
+      '<div class="dpf full" style="grid-column:1/-1"><div class="dfl">Dommages constatés</div><div class="dfv" style="white-space:pre-wrap">'+esc(a.dommages||'—')+'</div></div>'+
+    '</div></div>'+
+    '<div class="dp-sec"><div class="dp-sectl">🏢 Assurance</div><div class="dp-g2">'+
+      '<div class="dpf"><div class="dfl">N° police</div><div class="dfv">'+esc(a.police||'—')+'</div></div>'+
+      '<div class="dpf"><div class="dfl">N° déclaration</div><div class="dfv">'+esc(a.decl||'—')+'</div></div>'+
+      '<div class="dpf"><div class="dfl">Date déclaration</div><div class="dfv">'+fmtD(a.dateDecl)+'</div></div>'+
+      '<div class="dpf"><div class="dfl">Coût estimé</div><div class="dfv" style="color:var(--r);font-weight:700">'+(a.cout?fmt(a.cout)+' FCFA':'—')+'</div></div>'+
+      '<div class="dpf"><div class="dfl">Indemnisation</div><div class="dfv">'+(a.indem?fmt(a.indem)+' FCFA':'—')+'</div></div>'+
+    '</div></div>'+
+    '<div class="dp-sec"><div class="dp-sectl">📎 Document & observations</div>'+docHtml+
+      (a.obs?'<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.6;white-space:pre-wrap"><strong>Observations :</strong> '+esc(a.obs)+'</div>':'')+
+    '</div>'+
+    '<div style="display:flex;gap:7px;margin-top:14px;flex-wrap:wrap">'+
+      '<button class="btn bgold" style="flex:1;font-size:11px" onclick="editAccident('+a.id+');closeDP(\'acc\')">✏️ Modifier</button>'+
+      (a.docB64?'<button class="btn bg" style="flex:1;font-size:11px" onclick="openAccDoc('+a.id+')">📄 Document</button>':'')+
+    '</div>';
+  document.getElementById('dp-acc').classList.add('open');
+}
+
 function saveAccident(){
   var editId=document.getElementById('acc-edit-id').value;
   var vehicleId=parseInt(document.getElementById('acc-vehicle').value)||null;
@@ -10408,7 +10604,7 @@ function renderAccidents(){
   var statutMap={declare:'<span class="badge bo">Déclaré</span>',encours:'<span class="badge bbl">En cours</span>',expertise:'<span class="badge bgld">Expertise</span>',reparation:'<span class="badge bwarn" style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">Réparation</span>',clos:'<span class="badge ba">Clôturé</span>'};
   tbody.innerHTML=[...accs].reverse().map(function(a){
     var v=getV(a.vehicleId); var d=getD(a.driverId);
-    return '<tr>'+
+    return '<tr class="acc-row" style="cursor:pointer" onclick="showAccDetail('+a.id+')" title="Cliquer pour voir le détail">'+
       '<td style="font-family:monospace;font-size:9px;font-weight:700;color:var(--gold)">'+a.ref+'</td>'+
       '<td style="font-family:monospace;font-size:10px">'+fmtD(a.date)+'</td>'+
       '<td>'+(v?'<div class="vp">'+v.plate+'</div>':'—')+'</td>'+
@@ -10419,8 +10615,8 @@ function renderAccidents(){
       '<td style="font-family:monospace;font-size:9px">'+(a.decl||'—')+'</td>'+
       '<td style="font-family:monospace;font-size:10px;color:var(--r)">'+(a.cout?fmt(a.cout)+' F':'—')+'</td>'+
       '<td>'+(statutMap[a.statut]||a.statut)+'</td>'+
-      '<td>'+(a.docB64?'<button class="ab aba" onclick="openAccDoc('+a.id+')" title="Voir doc">📄</button>':'—')+'</td>'+
-      '<td><div class="ab-row">'+
+      '<td>'+(a.docB64?'<button class="ab aba" onclick="event.stopPropagation();openAccDoc('+a.id+')" title="Voir doc">📄</button>':'—')+'</td>'+
+      '<td><div class="ab-row" onclick="event.stopPropagation()">'+
         '<button class="abe" onclick="editAccident('+a.id+')" title="Modifier">✏️</button>'+
         (CU&&CU.role!=='reader'?'<button class="ab abr" onclick="delAccident('+a.id+')">🗑</button>':'')+
       '</div></td></tr>';
