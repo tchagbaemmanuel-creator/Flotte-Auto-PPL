@@ -1530,8 +1530,8 @@ textarea.fi{resize:vertical;min-height:50px;}
     <div class="kc c1"><div class="kl">Litres enregistrés</div><div class="kv" id="fl-l">0 L</div><div class="ks">total cumulé</div></div>
     <div class="kc c3"><div class="kl">Coût total</div><div class="kv" id="fl-c">0</div><div class="ks">FCFA cumulé</div></div>
     <div class="kc c2"><div class="kl">Opérations</div><div class="kv" id="fl-n">0</div><div class="ks">enregistrements</div></div>
-    <div class="kc c1"><div class="kl">Gasoil (L)</div><div class="kv" id="fl-gasoil">0 L</div><div class="ks">consommé</div></div>
-    <div class="kc c4"><div class="kl">Super (L)</div><div class="kv" id="fl-super">0 L</div><div class="ks">consommé</div></div>
+    <div class="kc c1"><div class="kl">Diesel (L)</div><div class="kv" id="fl-gasoil">0 L</div><div class="ks">consommé</div></div>
+    <div class="kc c4"><div class="kl">Essence (L)</div><div class="kv" id="fl-super">0 L</div><div class="ks">consommé</div></div>
     <div class="kc c3"><div class="kl">Cartes actives</div><div class="kv" id="fl-cards">0</div><div class="ks">cartes en service</div></div>
   </div>
 
@@ -1544,18 +1544,6 @@ textarea.fi{resize:vertical;min-height:50px;}
     <button id="ftab-reporting" onclick="switchFuelTab('reporting')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid transparent;color:var(--t3);cursor:pointer;margin-bottom:-2px">📈 Reporting</button>
   </div>
   <div id="fuel-tab-content"></div>
-
-  <!-- Graphiques toujours visibles en bas -->
-  <div class="chart-grid" style="margin-bottom:14px;margin-top:14px">
-    <div class="chart-card">
-      <div class="chart-title">⛽ Consommation Gasoil vs Super (FCFA)</div>
-      <div class="chart-wrap"><canvas id="chart-fuel-type"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">📈 Évolution mensuelle carburant</div>
-      <div class="chart-wrap"><canvas id="chart-fuel-trend"></canvas></div>
-    </div>
-  </div>
 </div>
 
 <!-- MODAL: GESTION CARTES CARBURANT -->
@@ -4987,6 +4975,7 @@ function initData(){
   if(!load(K.missions))save(K.missions,[]);
   if(!load(K.maint))save(K.maint,[]);
   if(!load(K.fuel))save(K.fuel,[]);
+  try{ migrateFuelTypes(); }catch(e){}
   if(!load(K.docs))save(K.docs,[]);
   if(!load(K.logs))save(K.logs,[]);
   if(!load(K.accounts)||!load(K.accounts).length){
@@ -5012,7 +5001,16 @@ const gD=()=>(load(K.drivers)||[]).map(function(d){return pplMapMediaFields(d,['
 const gT=()=>load(K.trips)||[];
 const gMs=()=>load(K.missions)||[];
 const gE=()=>(load(K.maint)||[]).map(function(m){return pplMapMediaFields(m,['photo']);});
-const gF=()=>(load(K.fuel)||[]).map(function(f){return pplMapMediaFields(f,['recu','photo']);});
+function resolveFuelTypeRaw(f){
+  if(!f) return '';
+  if(typeof f==='string') return f;
+  return f.typeCarb||f.type||f.typeC||f.produit||f.energie||'';
+}
+const gF=()=>(load(K.fuel)||[]).map(function(f){
+  var m=pplMapMediaFields(f,['recu','photo']);
+  m.typeCarb=normalizeFuelType(resolveFuelTypeRaw(m));
+  return m;
+});
 const gDc=()=>load(K.docs)||[];
 const gL=()=>load(K.logs)||[];
 const gAcc=()=>load(K.accounts)||[];
@@ -5934,10 +5932,24 @@ function renderMaint(){
   }).join("");
 }
 function renderFuelTable(){
+  var fuelPage=document.getElementById('page-fuel');
+  if(fuelPage&&fuelPage.classList.contains('on')&&document.getElementById('fuel-tab-content')){
+    var activeTab='ops';
+    ['ops','cartes','planning','budget','reporting'].forEach(function(t){
+      var btn=document.getElementById('ftab-'+t);
+      if(btn&&btn.style.borderBottomColor==='var(--maroon)') activeTab=t;
+    });
+    var filt=(document.getElementById('fuel-op-filter')||{}).value||'';
+    switchFuelTab(activeTab);
+    if(filt&&activeTab==='ops'){
+      var sel=document.getElementById('fuel-op-filter');
+      if(sel){ sel.value=filt; switchFuelTab('ops'); }
+    }
+    return;
+  }
   var fs=gF(); var tb=document.getElementById('fuel-body');
   if(!tb)return;
   if(!fs.length){tb.innerHTML="<tr><td colspan='11'><div class='empty'><div class='empty-ico'>⛽</div><div class='empty-txt'>Aucune opération carburant</div></div></td></tr>";return;}
-  var typeLabel={gasoil:'<span class="chip" style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">Gasoil</span>',super:'<span class="chip" style="background:#EFF6FF;color:#1D4ED8;border:1px solid #93C5FD">Super</span>',lavage:'<span class="chip" style="background:#F0FDF4;color:#14532D;border:1px solid #6EE7B7">Lavage</span>',autre:'<span class="chip">Autre</span>'};
   tb.innerHTML=[...fs].reverse().map(function(f){
     var v=getV(f.vehicleId);
     var recuHtml='<span style="font-size:9.5px;color:var(--t3)">—</span>';
@@ -5953,7 +5965,7 @@ function renderFuelTable(){
       '<td style="font-family:monospace;font-size:10px">'+fmtD(f.date)+'</td>'+
       '<td style="font-size:10.5px">'+(f.dept||'—')+'</td>'+
       '<td>'+(v?'<div class="vp">'+v.plate+'</div>':'—')+'</td>'+
-      '<td>'+(typeLabel[f.typeCarb]||typeLabel.gasoil)+'</td>'+
+      '<td>'+fuelTypeChip(f.typeCarb)+'</td>'+
       '<td style="font-family:monospace;font-size:10px">'+(f.carte||'—')+'</td>'+
       '<td style="font-family:monospace;font-weight:700;color:var(--maroon)">'+fmt(f.cost)+' F</td>'+
       '<td style="font-family:monospace">'+fmt(f.liters)+' L</td>'+
@@ -5975,8 +5987,8 @@ function updFuelStats(){
   if(e1)e1.textContent=fmt(tl.toFixed(0))+" L";
   if(e2)e2.textContent=fmt(tc)+" F";
   if(e3)e3.textContent=fs.length;
-  var gasoilL=fs.filter(function(f){return f.typeCarb!=='super';}).reduce(function(a,f){return a+(f.liters||0);},0);
-  var superL=fs.filter(function(f){return f.typeCarb==='super';}).reduce(function(a,f){return a+(f.liters||0);},0);
+  var gasoilL=fs.filter(function(f){return isFuelDiesel(f.typeCarb);}).reduce(function(a,f){return a+(f.liters||0);},0);
+  var superL=fs.filter(function(f){return isFuelEssence(f.typeCarb);}).reduce(function(a,f){return a+(f.liters||0);},0);
   var e4=document.getElementById('fl-gasoil');if(e4)e4.textContent=gasoilL.toFixed(0)+' L';
   var e5=document.getElementById('fl-super');if(e5)e5.textContent=superL.toFixed(0)+' L';
 }
@@ -6704,6 +6716,46 @@ var FUEL_PRICES = {
   diesel:  675
 };
 
+/** Normalise les types carburant (legacy gasoil/super → diesel/essence). */
+function normalizeFuelType(t) {
+  if (t && typeof t === 'object') t = resolveFuelTypeRaw(t);
+  if (!t) return 'diesel';
+  var s = String(t).trim().toLowerCase();
+  if (s === 'lavage' || s.indexOf('lavage') >= 0) return 'lavage';
+  if (s === 'super' || s === 'essence' || s.indexOf('essence') >= 0 || s.indexOf('super') >= 0 ||
+      s.indexOf('sans plomb') >= 0 || s.indexOf('sp95') >= 0 || s.indexOf('sp 95') >= 0 ||
+      s.indexOf('petrol') >= 0 || s.indexOf('benzine') >= 0) return 'essence';
+  if (s === 'gasoil' || s === 'diesel' || s.indexOf('gasoil') >= 0 || s.indexOf('diesel') >= 0 ||
+      s.indexOf('gazole') >= 0) return 'diesel';
+  return 'autre';
+}
+function isFuelEssence(t) { return normalizeFuelType(t) === 'essence'; }
+function isFuelDiesel(t) { return normalizeFuelType(t) === 'diesel'; }
+function fuelTypeLabel(t) {
+  var n = normalizeFuelType(t);
+  return { essence: 'Essence', diesel: 'Diesel', lavage: 'Lavage', autre: 'Autre' }[n] || n;
+}
+function fuelTypeChip(t) {
+  var n = normalizeFuelType(t);
+  if (n === 'essence') return '<span class="chip" style="background:#EFF6FF;color:#1D4ED8;border:1px solid #93C5FD">Essence</span>';
+  if (n === 'diesel') return '<span class="chip" style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">Diesel</span>';
+  if (n === 'lavage') return '<span class="chip" style="background:#F0FDF4;color:#14532D;border:1px solid #6EE7B7">Lavage</span>';
+  return '<span class="chip">' + fuelTypeLabel(t) + '</span>';
+}
+function migrateFuelTypes() {
+  var raw = load(K.fuel) || [];
+  var changed = false;
+  var next = raw.map(function (f) {
+    var n = normalizeFuelType(resolveFuelTypeRaw(f));
+    var patch = { typeCarb: n };
+    if (f.type && f.type !== n) patch.type = n;
+    if (f.typeC && f.typeC !== n) patch.typeC = n;
+    if (f.typeCarb !== n || f.type !== n || f.typeC !== n) changed = true;
+    return Object.assign({}, f, patch);
+  });
+  if (changed) save(K.fuel, next);
+}
+
 function getFuelPrice(type){
   return FUEL_PRICES[type||'essence'] || 820;
 }
@@ -6950,7 +7002,7 @@ function saveF(){
     date:document.getElementById('af-dt').value||today(),
     dept:document.getElementById('af-dept').value||'',
     carte:(function(){var sel=document.getElementById('af-carte-sel');var txt=document.getElementById('af-carte');return (sel&&sel.style.display!=='none'&&sel.value)?sel.value:(txt?txt.value:'');})()||'',
-    typeCarb:document.getElementById('af-type-carb').value||'gasoil',
+    typeCarb:normalizeFuelType(document.getElementById('af-type-carb').value||'diesel'),
     liters,cost,
     prixL:parseFloat(document.getElementById('af-prix-l').value)||0,
     km:parseInt(document.getElementById('af-km').value)||0,
@@ -6989,7 +7041,7 @@ function editFuel(id){
   var fill=function(elId,val){var el=document.getElementById(elId);if(el)el.value=val||'';};
   fill('af-v',f.vehicleId);fill('af-d',f.driverId);fill('af-dt',f.date);
   fill('af-dept',f.dept||'');fill('af-carte',f.carte||'');
-  fill('af-type-carb',f.typeCarb||'gasoil');
+  fill('af-type-carb',normalizeFuelType(f.typeCarb)||'diesel');
   fill('af-l',f.liters);fill('af-c',f.cost);fill('af-prix-l',f.prixL||'');
   fill('af-km',f.km);fill('af-km-prev',f.kmPrev||'');fill('af-conso',f.conso||'');
   fill('af-s',f.station||'');fill('af-notes',f.notes||'');
@@ -10766,9 +10818,9 @@ function renderFuelRecap(){
   filtered.forEach(function(f){
     var k=f.vehicleId||'?';
     if(!byV[k]) byV[k]={vehicleId:k,depts:new Set(),carte:'',gasoilFcfa:0,superFcfa:0,gasoilL:0,superL:0,total:0,kmList:[]};
-    var t=f.typeCarb||'gasoil';
-    if(t==='gasoil'){byV[k].gasoilFcfa+=f.cost||0;byV[k].gasoilL+=f.liters||0;}
-    else if(t==='super'){byV[k].superFcfa+=f.cost||0;byV[k].superL+=f.liters||0;}
+    var t=normalizeFuelType(f.typeCarb);
+    if(isFuelDiesel(t)){byV[k].gasoilFcfa+=f.cost||0;byV[k].gasoilL+=f.liters||0;}
+    else if(isFuelEssence(t)){byV[k].superFcfa+=f.cost||0;byV[k].superL+=f.liters||0;}
     byV[k].total+=f.cost||0;
     if(f.dept) byV[k].depts.add(f.dept);
     if(f.carte) byV[k].carte=f.carte;
@@ -10826,13 +10878,13 @@ function renderFuelCharts(filtered){
     filtered.forEach(function(f){
       var v=getV(f.vehicleId); var lbl=v?v.plate:'?';
       if(!byVeh[lbl]) byVeh[lbl]={g:0,s:0};
-      if((f.typeCarb||'gasoil')==='gasoil') byVeh[lbl].g+=f.cost||0;
-      else if(f.typeCarb==='super') byVeh[lbl].s+=f.cost||0;
+      if(isFuelDiesel(f.typeCarb)) byVeh[lbl].g+=f.cost||0;
+      else if(isFuelEssence(f.typeCarb)) byVeh[lbl].s+=f.cost||0;
     });
     var labels=Object.keys(byVeh);
     chartFuelType=new Chart(ctx1,{type:'bar',data:{labels,datasets:[
-      {label:'Gasoil (FCFA)',data:labels.map(function(l){return byVeh[l].g;}),backgroundColor:'rgba(200,168,75,.8)',borderRadius:4},
-      {label:'Super (FCFA)',data:labels.map(function(l){return byVeh[l].s;}),backgroundColor:'rgba(59,130,246,.7)',borderRadius:4}
+      {label:'Diesel (FCFA)',data:labels.map(function(l){return byVeh[l].g;}),backgroundColor:'rgba(200,168,75,.8)',borderRadius:4},
+      {label:'Essence (FCFA)',data:labels.map(function(l){return byVeh[l].s;}),backgroundColor:'rgba(59,130,246,.7)',borderRadius:4}
     ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#4A2800',font:{size:10}}}},scales:{x:{ticks:{color:'#4A2800',font:{size:9}}},y:{ticks:{color:'#4A2800'},grid:{color:'rgba(200,180,160,.4)'},beginAtZero:true,stacked:true},xAxis:{stacked:true}}}});
   }
   // Chart 2: Monthly trend
@@ -11809,7 +11861,7 @@ function confirmFuelImport(){
       date: r.date || today_str,
       dept: r.dept || '',
       carte: r.carte || '',
-      typeCarb: r.typeC || 'gasoil',
+      typeCarb: normalizeFuelType(r.typeC || 'diesel'),
       liters: r.litres || 0,
       cost: r.montant || 0,
       prixL: (r.litres && r.montant) ? Math.round(r.montant/r.litres) : 0,
@@ -11836,9 +11888,6 @@ function confirmFuelImport(){
   }
   _fuelImportRows = [];
 }
-
-// Patch updFuelStats to include gasoil/super breakdown
-var _origUpdFuelStats = typeof updFuelStats === 'function' ? updFuelStats : null;
 
 // ═══════════════════════════════════════════════════════════
 // GESTIONNAIRE DE STOCKAGE LOCALSTORAGE
@@ -15894,7 +15943,8 @@ function togglePinVis(inputId, btnId){
 
 // ── ONGLETS CARBURANT ──
 function switchFuelTab(tab){
-  ['ops','cartes','budget','reporting'].forEach(function(t){
+  try{ migrateFuelTypes(); }catch(e){}
+  ['ops','cartes','budget','planning','reporting'].forEach(function(t){
     var btn=document.getElementById('ftab-'+t);
     if(!btn) return;
     btn.style.borderBottomColor = t===tab?'var(--maroon)':'transparent';
@@ -15905,44 +15955,49 @@ function switchFuelTab(tab){
   if(!content) return;
 
   if(tab==='ops'){
-    var fuels=gF(); var cards=gFuelCards();
-    var typeLbl={gasoil:'⛽ Gasoil',super:'🟡 Super',diesel:'🔵 Diesel',lavage:'🚿 Lavage',autre:'📌 Autre'};
+    var fuels=gF();
+    var tfEl=document.getElementById('fuel-op-filter');
+    var tf=tfEl?tfEl.value:'';
+    var list=fuels.slice().reverse();
+    if(tf) list=list.filter(function(f){ return normalizeFuelType(f.typeCarb)===normalizeFuelType(tf); });
+    var rowsHtml=list.length?list.map(function(f){
+      var v=getV(f.vehicleId); var d=f.driverId?getD(f.driverId):null;
+      return '<tr>'+
+        '<td style="font-size:10px;white-space:nowrap">'+fmtD(f.date)+'</td>'+
+        '<td>'+(v?'<div class="vp" style="font-size:10px">'+v.plate+'</div>':'—')+'</td>'+
+        '<td style="font-size:11px">'+(d?d.name:'—')+'</td>'+
+        '<td>'+fuelTypeChip(f.typeCarb)+'</td>'+
+        '<td style="font-family:monospace;font-size:10px">'+(f.carte||'—')+'</td>'+
+        '<td style="font-family:monospace;font-weight:700;color:var(--gold)">'+(f.liters?f.liters+'L':'—')+'</td>'+
+        '<td style="font-family:monospace;font-size:10px;color:var(--r)">'+(f.cost?fmt(f.cost)+' F':'—')+'</td>'+
+        '<td style="font-size:10px">'+(f.station||'—')+'</td>'+
+        '<td style="font-family:monospace;font-size:10px">'+(f.km?fmt(f.km)+' km':'—')+'</td>'+
+        '<td>'+(f.recuB64||f.recu||f.docB64||f.photo?'<button class="ab aba" onclick="showRecuFuel(\''+f.id+'\')">🧾</button>':'—')+'</td>'+
+        '<td><div class="ab-row">'+
+          '<button class="abe" onclick="editFuel('+f.id+')" title="Modifier">✏️</button>'+
+          (CU&&CU.role!=='reader'?'<button class="abe" style="color:var(--r)" onclick="delFuel('+f.id+')">🗑</button>':'')+
+        '</div></td>'+
+      '</tr>';
+    }).join(''):'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--t3)">Aucune opération enregistrée</td></tr>';
     content.innerHTML=
       '<div class="card">'+
       '<div class="ch"><div class="ct"><span class="dot"></span>Historique des opérations carburant</div>'+
-      '<div style="display:flex;gap:7px">'+
+      '<div style="display:flex;gap:7px;align-items:center">'+
+        '<span style="font-size:10px;color:var(--t3)">'+list.length+' opération(s)</span>'+
         '<select class="fi" id="fuel-op-filter" onchange="switchFuelTab(\'ops\')" style="width:auto;padding:5px;font-size:11px">'+
           '<option value="">Tous types</option>'+
-          '<option value="gasoil">Gasoil</option><option value="super">Super</option>'+
-          '<option value="diesel">Diesel</option><option value="lavage">Lavage</option>'+
+          '<option value="essence">Essence</option>'+
+          '<option value="diesel">Diesel</option>'+
+          '<option value="lavage">Lavage</option>'+
         '</select>'+
       '</div></div>'+
-      '<div class="tw"><table><thead><tr>'+
+      '<div class="tw" style="max-height:65vh;overflow:auto"><table><thead><tr>'+
         '<th>Date</th><th>Véhicule</th><th>Conducteur</th><th>Type op.</th>'+
         '<th>N° Carte</th><th>Litres</th><th>Coût (FCFA)</th><th>Station</th><th>KM</th><th>Reçu</th><th>Actions</th>'+
-      '</tr></thead><tbody id="fuel-body">'+
-      (fuels.length ? fuels.slice().reverse().map(function(f){
-        var v=getV(f.vehicleId); var d=f.driverId?getD(f.driverId):null;
-        var tf=(document.getElementById('fuel-op-filter')||{}).value||'';
-        if(tf&&f.typeCarb!==tf) return '';
-        return '<tr>'+
-          '<td style="font-size:10px;white-space:nowrap">'+fmtD(f.date)+'</td>'+
-          '<td>'+(v?'<div class="vp" style="font-size:10px">'+v.plate+'</div>':'—')+'</td>'+
-          '<td style="font-size:11px">'+(d?d.name:'—')+'</td>'+
-          '<td><span class="chip">'+(typeLbl[f.typeCarb]||f.typeCarb||'—')+'</span></td>'+
-          '<td style="font-family:monospace;font-size:10px">'+(f.carte||'—')+'</td>'+
-          '<td style="font-family:monospace;font-weight:700;color:var(--gold)">'+(f.liters?f.liters+'L':'—')+'</td>'+
-          '<td style="font-family:monospace;font-size:10px;color:var(--r)">'+(f.cost?fmt(f.cost)+' F':'—')+'</td>'+
-          '<td style="font-size:10px">'+(f.station||'—')+'</td>'+
-          '<td style="font-family:monospace;font-size:10px">'+(f.km?fmt(f.km)+' km':'—')+'</td>'+
-          '<td>'+(f.recuB64||f.docB64?'<button class="ab aba" onclick="showRecuFuel(\''+f.id+'\')">🧾</button>':'—')+'</td>'+
-          '<td><div class="ab-row">'+
-            '<button class="abe" onclick="editFuel('+f.id+')" title="Modifier">✏️</button>'+
-            '<button class="abe" style="color:var(--r)" onclick="delFuel('+f.id+')">🗑</button>'+
-          '</div></td>'+
-        '</tr>';
-      }).join('') : '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--t3)">Aucune opération enregistrée</td></tr>')+
-      '</tbody></table></div></div>';
+      '</tr></thead><tbody id="fuel-body">'+rowsHtml+'</tbody></table></div></div>';
+    var sel=document.getElementById('fuel-op-filter');
+    if(sel&&tf) sel.value=tf;
+    try{ updFuelStats(); }catch(e){}
   }
 
   else if(tab==='cartes'){
@@ -16012,7 +16067,7 @@ function switchFuelTab(tab){
     // Reporting par type d'opération
     var byType={}; var byVehicle={}; var byService={};
     fuels3.forEach(function(f){
-      var t=f.typeCarb||'autre';
+      var t=fuelTypeLabel(f.typeCarb);
       if(!byType[t]) byType[t]={l:0,cost:0,n:0};
       byType[t].l+=(f.liters||0); byType[t].cost+=(f.cost||0); byType[t].n++;
       var v=getV(f.vehicleId);
@@ -16436,18 +16491,7 @@ setTimeout(function(){
 // VERSION 11
 // ═══════════════════════════════════════════════════════════
 
-// ── REPORTING CARBURANT COMPLET ──
-// Override de l'onglet reporting pour afficher le nouveau tableau unifié
-(function(){
-  var _origSwitch = typeof switchFuelTab === 'function' ? switchFuelTab : null;
-  window.switchFuelTab = function(tab){
-    if(_origSwitch) _origSwitch(tab);
-    if(tab !== 'reporting') return;
-    // Remplacer le contenu par le nouveau reporting
-    setTimeout(function(){ renderFuelReporting(); }, 50);
-  };
-})();
-
+// renderFuelReporting : conservé pour exports éventuels (sans recap mensuel)
 function renderFuelReporting(){
   var content = document.getElementById('fuel-tab-content');
   if(!content) return;
@@ -16593,17 +16637,17 @@ function renderFuelReporting(){
         (function(){
           var byType = {};
           fuels.forEach(function(f){
-            var t = f.typeCarb||'autre';
+            var t = fuelTypeLabel(f.typeCarb);
             if(!byType[t]) byType[t]={l:0,cost:0,n:0};
             byType[t].l+=(f.liters||0); byType[t].cost+=(f.cost||0); byType[t].n++;
           });
           var total = Object.values(byType).reduce(function(a,v){return a+v.cost;},0);
           return Object.entries(byType).sort(function(a,b){return b[1].cost-a[1].cost;}).map(function(e){
             var pct = total ? Math.round(e[1].cost/total*100) : 0;
-            var icons = {essence:'⛽',diesel:'🔵',gasoil:'⛽',super:'🟡',lavage:'🚿',autre:'📌'};
+            var icons = {'Essence':'⛽','Diesel':'🔵','Lavage':'🚿','Autre':'📌'};
             return '<div style="margin-bottom:10px">'+
               '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
-                '<span style="font-size:11px;font-weight:600">'+(icons[e[0]]||'📌')+' '+e[0].charAt(0).toUpperCase()+e[0].slice(1)+'</span>'+
+                '<span style="font-size:11px;font-weight:600">'+(icons[e[0]]||'📌')+' '+e[0]+'</span>'+
                 '<div style="text-align:right">'+
                   '<div style="font-size:11px;font-family:monospace;font-weight:700;color:var(--r)">'+fmt(e[1].cost)+' F</div>'+
                   '<div style="font-size:9px;color:var(--t3)">'+e[1].l.toFixed(1)+'L · '+e[1].n+' op. · '+pct+'%</div>'+
@@ -16617,19 +16661,7 @@ function renderFuelReporting(){
         })()+
         '</div>'+
       '</div>'+
-    '</div>'+
-
-    // Évolution mensuelle améliorée
-    '<div class="card">'+
-      '<div class="ch"><div class="ct"><span class="dot" style="background:var(--bp)"></span>📈 Évolution mensuelle consommation carburant</div></div>'+
-      '<div id="fuel-monthly-chart-wrapper" style="padding:10px">'+
-        '<canvas id="chart-fuel-monthly-v11" height="120"></canvas>'+
-      '</div>'+
-      '<div id="fuel-monthly-table" style="padding:0 12px 12px"></div>'+
     '</div>';
-
-  // Rendre le graphique mensuel amélioré
-  setTimeout(function(){ renderFuelMonthlyChart(); }, 100);
 }
 
 function renderFuelMonthlyChart(){
@@ -16639,12 +16671,14 @@ function renderFuelMonthlyChart(){
   fuels.forEach(function(f){
     if(!f.date) return;
     var key = f.date.slice(0,7); // YYYY-MM
-    if(!months[key]) months[key] = {litres:0, cout:0, gasoil:0, essence:0, diesel:0, lavage:0};
+    if(!months[key]) months[key] = {litres:0, cout:0, diesel:0, essence:0, lavage:0, autre:0};
     months[key].litres += (f.liters||0);
     months[key].cout   += (f.cost||0);
-    var t = f.typeCarb||'autre';
-    if(months[key][t]!==undefined) months[key][t]+=(f.liters||0);
-    else months[key].autre = (months[key].autre||0)+(f.liters||0);
+    var t = normalizeFuelType(f.typeCarb);
+    if(t==='diesel') months[key].diesel += (f.liters||0);
+    else if(t==='essence') months[key].essence += (f.liters||0);
+    else if(t==='lavage') months[key].lavage += (f.liters||0);
+    else months[key].autre += (f.liters||0);
   });
   var sortedKeys = Object.keys(months).sort();
 
@@ -16656,8 +16690,8 @@ function renderFuelMonthlyChart(){
         '<th style="padding:6px 10px;text-align:left;font-size:9px;text-transform:uppercase;color:var(--t3)">Mois</th>'+
         '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Litres</th>'+
         '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Coût FCFA</th>'+
-        '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Gasoil/Diesel</th>'+
-        '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Essence/Super</th>'+
+        '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Diesel</th>'+
+        '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Essence</th>'+
         '<th style="padding:6px 10px;text-align:right;font-size:9px;text-transform:uppercase;color:var(--t3)">Lavage</th>'+
       '</tr></thead><tbody>'+
       sortedKeys.map(function(k,i){
@@ -16670,8 +16704,8 @@ function renderFuelMonthlyChart(){
           '<td style="padding:6px 10px;text-align:right;font-family:monospace;color:var(--r);font-weight:700">'+fmt(m.cout)+' F'+
             (trend!==null?'<span style="font-size:9px;margin-left:4px;color:'+(trend>0?'#DC2626':'#059669')+'">'+( trend>0?'▲':'▼')+Math.abs(trend)+'%</span>':'')+
           '</td>'+
-          '<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:10px">'+(m.gasoil+m.diesel).toFixed(1)+'L</td>'+
-          '<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:10px">'+(m.essence+m.super||0).toFixed(1)+'L</td>'+
+          '<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:10px">'+(m.diesel||0).toFixed(1)+'L</td>'+
+          '<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:10px">'+(m.essence||0).toFixed(1)+'L</td>'+
           '<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:10px">'+(m.lavage||0).toFixed(1)+'L</td>'+
         '</tr>';
       }).join('')+
@@ -21970,141 +22004,6 @@ function injectModuleManagerPage() {
 // ═══════════════════════════════════════════════════════════════════════
 // CORRECTIONS SUPPLÉMENTAIRES v20.1 — Audit boutons & champs
 // ═══════════════════════════════════════════════════════════════════════
-
-// ─── BUG FIX 6: renderFuelRecap — Tableau récapitulatif carburant ─────
-// fuel-recap-body / fuel-recap-foot / fuel-periode sont absents du HTML.
-// On remplace renderFuelRecap pour qu'elle injecte son propre conteneur
-// dans fuel-tab-content (comme le font les autres onglets carburant).
-(function() {
-  var _origRFR = window.renderFuelRecap;
-  window.renderFuelRecap = function() {
-    var fs = (typeof gF === 'function') ? gF() : [];
-    var tabContent = document.getElementById('fuel-tab-content');
-    if (!tabContent) return;
-
-    // Injecter le HTML du récapitulatif avec filtre période
-    tabContent.innerHTML =
-      '<div class="card">' +
-      '<div class="ch"><div class="ct"><span class="dot" style="background:var(--gold)"></span>' +
-      '📋 Récapitulatif consommation par véhicule</div>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<label style="font-size:10px;color:var(--t3)">Période :</label>' +
-        '<select id="fuel-periode" class="fi" onchange="renderFuelRecap()" ' +
-        'style="width:auto;padding:5px 8px;font-size:11px">' +
-          '<option value="month">Ce mois</option>' +
-          '<option value="quarter">Ce trimestre</option>' +
-          '<option value="year">Cette année</option>' +
-          '<option value="all">Tout</option>' +
-        '</select>' +
-      '</div></div>' +
-      '<div class="tw"><table>' +
-      '<thead><tr style="background:#F9F5EE">' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:left">Période</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:left">Département</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:left">Véhicule</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:left">Type</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:left">N° Carte</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">Total FCFA</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">Gasoil FCFA</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">Super FCFA</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">Gasoil (L)</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">Super (L)</th>' +
-        '<th style="padding:7px 10px;font-size:9px;text-transform:uppercase;text-align:right">KM moy.</th>' +
-      '</tr></thead>' +
-      '<tbody id="fuel-recap-body"></tbody>' +
-      '<tfoot id="fuel-recap-foot"></tfoot>' +
-      '</table></div></div>';
-
-    // Maintenant appeler la logique originale si elle existe, sinon calculer ici
-    var period = document.getElementById('fuel-periode').value;
-    var now = new Date();
-
-    function inPeriod(dateStr) {
-      if (!dateStr) return false;
-      var d = new Date(dateStr);
-      if (period === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      if (period === 'quarter') { var q = Math.floor(now.getMonth()/3); return Math.floor(d.getMonth()/3) === q && d.getFullYear() === now.getFullYear(); }
-      if (period === 'year') return d.getFullYear() === now.getFullYear();
-      return true;
-    }
-
-    var filtered = fs.filter(function(f) { return inPeriod(f.date); });
-    var byV = {};
-    filtered.forEach(function(f) {
-      var k = f.vehicleId || '?';
-      if (!byV[k]) byV[k] = { vehicleId:k, depts:[], carte:'', gasoilFcfa:0, superFcfa:0, gasoilL:0, superL:0, total:0, kmList:[] };
-      var t = f.typeCarb || 'gasoil';
-      if (t === 'gasoil') { byV[k].gasoilFcfa += f.cost||0; byV[k].gasoilL += f.liters||0; }
-      else if (t === 'super') { byV[k].superFcfa += f.cost||0; byV[k].superL += f.liters||0; }
-      byV[k].total += f.cost||0;
-      if (f.dept && byV[k].depts.indexOf(f.dept) < 0) byV[k].depts.push(f.dept);
-      if (f.carte) byV[k].carte = f.carte;
-      if (f.km) byV[k].kmList.push(f.km);
-    });
-
-    var tbody = document.getElementById('fuel-recap-body');
-    var tfoot = document.getElementById('fuel-recap-foot');
-    if (!tbody) return;
-
-    var fmtN = function(n) { return Number(n||0).toLocaleString('fr-FR'); };
-    var totGF=0, totSF=0, totGL=0, totSL=0, totT=0;
-    var rows = Object.values(byV).sort(function(a,b) { return b.total - a.total; });
-
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--t3)">Aucune donnée pour cette période</td></tr>';
-    } else {
-      tbody.innerHTML = rows.map(function(r, i) {
-        var v = (typeof getV === 'function') ? getV(r.vehicleId) : null;
-        var dept = r.depts.join(', ') || '—';
-        var avgKm = r.kmList.length ? Math.round(r.kmList.reduce(function(a,b){return a+b;},0)/r.kmList.length) : 0;
-        totGF+=r.gasoilFcfa; totSF+=r.superFcfa; totGL+=r.gasoilL; totSL+=r.superL; totT+=r.total;
-        var bg = i%2===0 ? 'background:#fff' : 'background:#F9F5EE';
-        return '<tr style="' + bg + '">' +
-          '<td style="padding:6px 10px;font-size:10px">' + (period==='month'?'Ce mois':period==='quarter'?'Ce trim.':period==='year'?'Cette année':'Tout') + '</td>' +
-          '<td style="padding:6px 10px;font-size:10px">' + dept + '</td>' +
-          '<td style="padding:6px 10px">' + (v ? '<div class="vp" style="font-size:10px">' + v.plate + '</div>' : '—') + '</td>' +
-          '<td style="padding:6px 10px;font-size:10px">' + (v ? v.type : '—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px">' + (r.carte||'—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-weight:700;color:var(--maroon);text-align:right">' + fmtN(r.total) + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px;text-align:right">' + (r.gasoilFcfa?fmtN(r.gasoilFcfa):'—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px;text-align:right">' + (r.superFcfa?fmtN(r.superFcfa):'—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px;text-align:right">' + (r.gasoilL?r.gasoilL.toFixed(1)+' L':'—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px;text-align:right">' + (r.superL?r.superL.toFixed(1)+' L':'—') + '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:10px;text-align:right">' + (avgKm?fmtN(avgKm)+' km':'—') + '</td>' +
-        '</tr>';
-      }).join('');
-      tfoot.innerHTML = '<tr style="background:var(--maroon);color:#fff;font-weight:700">' +
-        '<td colspan="5" style="padding:8px 10px;font-size:11px">TOTAL</td>' +
-        '<td style="padding:8px 10px;font-family:monospace;text-align:right">' + fmtN(totT) + '</td>' +
-        '<td style="padding:8px 10px;font-family:monospace;text-align:right">' + fmtN(totGF) + '</td>' +
-        '<td style="padding:8px 10px;font-family:monospace;text-align:right">' + fmtN(totSF) + '</td>' +
-        '<td style="padding:8px 10px;font-family:monospace;text-align:right">' + totGL.toFixed(1) + ' L</td>' +
-        '<td style="padding:8px 10px;font-family:monospace;text-align:right">' + totSL.toFixed(1) + ' L</td>' +
-        '<td style="padding:8px 10px"></td>' +
-      '</tr>';
-    }
-  };
-
-  // Hook switchFuelTab pour appeler renderFuelRecap sur l'onglet reporting
-  var _origSFT = window.switchFuelTab;
-  if (typeof _origSFT === 'function') {
-    window.switchFuelTab = function(tab) {
-      if (tab === 'reporting') {
-        // Mettre à jour le style des boutons onglets
-        ['ops','cartes','budget','reporting'].forEach(function(t) {
-          var btn = document.getElementById('ftab-' + t);
-          if (!btn) return;
-          btn.style.borderBottomColor = t===tab ? 'var(--maroon)' : 'transparent';
-          btn.style.color = t===tab ? 'var(--maroon)' : 'var(--t3)';
-          btn.style.fontWeight = t===tab ? '700' : '400';
-        });
-        renderFuelRecap();
-        return;
-      }
-      _origSFT(tab);
-    };
-  }
-})();
 
 // ─── BUG FIX 7: rt-km-hint — Hint KM dans formulaire retour de sortie ──
 // Le hint est créé dynamiquement si #rt-km existe mais #rt-km-hint est absent.
