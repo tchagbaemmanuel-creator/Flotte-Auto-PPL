@@ -4728,7 +4728,10 @@ async function syncFromServer(opts) {
       if (!k || k.startsWith('_ppl_jwt')) return;
       applyMergedKeyToStorage(k, v);
     });
-    try { renderAll(); } catch(e) {}
+    try {
+      if(typeof CU!=='undefined'&&CU&&typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(CU);
+      renderAll();
+    } catch(e) {}
     if (!quiet) showT('✅ Données synchronisées', 's');
   } catch(e) { /* hors ligne */ }
 }
@@ -5145,6 +5148,7 @@ function upsertAccountFromLogin(cloudUser, password){
     accs.push(merged);
   }
   save(K.accounts, accs);
+  try{ if(typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(merged); }catch(e){}
   return merged;
 }
 function _loginHasServer(){
@@ -5181,6 +5185,7 @@ function doLogin(){
     var emergEl2 = document.getElementById('login-emergency');
     if(emergEl2) emergEl2.style.display = 'none';
     CU = acc;
+    try{ if(typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(acc); }catch(e){}
     _afterLogin(acc, loginBtn);
   }
 
@@ -5933,17 +5938,23 @@ function renderMaint(){
 }
 function renderFuelTable(){
   var fuelPage=document.getElementById('page-fuel');
-  if(fuelPage&&fuelPage.classList.contains('on')&&document.getElementById('fuel-tab-content')){
-    var activeTab='ops';
-    ['ops','cartes','planning','budget','reporting'].forEach(function(t){
-      var btn=document.getElementById('ftab-'+t);
-      if(btn&&btn.style.borderBottomColor==='var(--maroon)') activeTab=t;
-    });
-    var filt=(document.getElementById('fuel-op-filter')||{}).value||'';
-    switchFuelTab(activeTab);
-    if(filt&&activeTab==='ops'){
-      var sel=document.getElementById('fuel-op-filter');
-      if(sel){ sel.value=filt; switchFuelTab('ops'); }
+  if(fuelPage&&fuelPage.classList.contains('on')){
+    try{ updFuelStats(); }catch(e){}
+    var cl=document.getElementById('fl-cards');
+    if(cl) cl.textContent=gFuelCards().filter(function(c){return c.statut==='active';}).length;
+    var content=document.getElementById('fuel-tab-content');
+    if(!content||!content.innerHTML.trim()){
+      switchFuelTab('ops');
+      return;
+    }
+    // Rafraîchir uniquement l'onglet Opérations si c'est l'onglet actif
+    if((window._fuelActiveTab||'ops')==='ops'&&document.getElementById('fuel-body')){
+      var filt=(document.getElementById('fuel-op-filter')||{}).value||'';
+      switchFuelTab('ops');
+      if(filt){
+        var sel=document.getElementById('fuel-op-filter');
+        if(sel) sel.value=filt;
+      }
     }
     return;
   }
@@ -7642,7 +7653,15 @@ function showPage(p){
   if(p==='trips') renderTrips();
   if(p==='missions') renderMissions();
   if(p==='maint') renderMaint();
-  if(p==='fuel'){try{renderFuelTable();}catch(e){} setTimeout(function(){try{switchFuelTab('ops');}catch(e){}},50);}
+  if(p==='fuel'){
+    try{renderFuelTable();}catch(e){}
+    setTimeout(function(){
+      try{
+        var fc=document.getElementById('fuel-tab-content');
+        if(fc&&!fc.innerHTML.trim()) switchFuelTab('ops');
+      }catch(e){}
+    },50);
+  }
   if(p==='assurance') renderDocs();
   if(p==='history') renderHistory();
   if(p==='reports'){
@@ -14625,7 +14644,7 @@ showPage = function(p){
   if(dest==='motos-hub')      setTimeout(function(){try{renderMotosHub();}catch(e){}},50);
   if(dest==='maintenance-hub')setTimeout(function(){try{renderMaintenanceHub();}catch(e){}},50);
   if(dest==='vehicles')       setTimeout(function(){try{renderVehiclesGrouped();}catch(e){}},50);
-  if(dest==='fuel')           setTimeout(function(){try{switchFuelTab('ops');}catch(e){}},80);
+  if(dest==='fuel')           setTimeout(function(){try{var fc=document.getElementById('fuel-tab-content');if(fc&&!fc.innerHTML.trim())switchFuelTab('ops');}catch(e){}},80);
 };
 
 // ── V9 : Page MOUVEMENTS (Sorties + Missions fusionnées) ──
@@ -15943,6 +15962,7 @@ function togglePinVis(inputId, btnId){
 
 // ── ONGLETS CARBURANT ──
 function switchFuelTab(tab){
+  window._fuelActiveTab = tab;
   try{ migrateFuelTypes(); }catch(e){}
   ['ops','cartes','budget','planning','reporting'].forEach(function(t){
     var btn=document.getElementById('ftab-'+t);
@@ -16320,7 +16340,8 @@ function showRecuFuel(id){
     if(page==='fuel'){
       setTimeout(function(){
         try{
-          switchFuelTab('ops');
+          var fc=document.getElementById('fuel-tab-content');
+          if(fc&&!fc.innerHTML.trim()) switchFuelTab('ops');
           var cl=document.getElementById('fl-cards');
           if(cl) cl.textContent=gFuelCards().filter(function(c){return c.statut==='active';}).length;
         }catch(e){}
@@ -18185,6 +18206,7 @@ if(!load(K_FUEL_PLANNING)) save(K_FUEL_PLANNING,[]);
 (function(){
   var _orig=window.switchFuelTab;
   window.switchFuelTab=function(tab){
+    window._fuelActiveTab = tab;
     ['ops','cartes','planning','budget','reporting'].forEach(function(t){
       var b=document.getElementById('ftab-'+t); if(!b) return;
       b.style.borderBottomColor=t===tab?'var(--maroon)':'transparent';
@@ -18855,7 +18877,6 @@ if(typeof renderDash==='undefined'){
 if(typeof renderFuel==='undefined'){
   window.renderFuel=function(){
     try{renderFuelTable();}catch(e){}
-    setTimeout(function(){try{switchFuelTab('ops');}catch(e){}},50);
   };
 }
 
@@ -19406,7 +19427,9 @@ function getVisibleApprobations(){
     });
   }
   return list.filter(function(d){
-    return String(d.demandeurId)===String(CU.id)||(d.demandeurNom||'').trim().toLowerCase()===(CU.name||'').trim().toLowerCase();
+    return (typeof window._demBelongsToUser==='function')?window._demBelongsToUser(d,CU):(
+      String(d.demandeurId)===String(CU.id)||(d.demandeurNom||'').trim().toLowerCase()===(CU.name||'').trim().toLowerCase()
+    );
   });
 }
 
@@ -23392,6 +23415,52 @@ function saveDemandes(arr){
 }
 window.saveDemandes = saveDemandes;
 
+function _normDemStr(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
+function _demSid(a,b){ return a!=null&&b!=null&&String(a)!==''&&String(b)!==''&&String(a)===String(b); }
+function _demIsUrgente(d){ return !!(d&&(d.typeUrgent===true||d.urgence==='urgente')); }
+function _demBelongsToUser(d,cu){
+  if(!d||!cu) return false;
+  if(_demSid(d.demandeurId,cu.id)) return true;
+  if(_normDemStr(d.demandeurNom)&&_normDemStr(d.demandeurNom)===_normDemStr(cu.name)) return true;
+  if(_normDemStr(d.demandeurUsername)&&_normDemStr(d.demandeurUsername)===_normDemStr(cu.username)) return true;
+  if(d.demandeurEmail&&cu.email&&_normDemStr(d.demandeurEmail)===_normDemStr(cu.email)) return true;
+  return false;
+}
+function demandesVisiblesPour(cu,demandes){
+  if(!cu||!Array.isArray(demandes)) return [];
+  var isA=cu.role==='admin'||cu.role==='manager';
+  var isP=cu.role==='approbateur';
+  if(isA) return demandes;
+  if(isP){
+    var collabAccs=(typeof gAcc==='function'?gAcc():[]).filter(function(a){
+      return a.active!==false&&String(a.approbateurId)===String(cu.id)&&a.approbateurId;
+    });
+    return demandes.filter(function(d){
+      if(collabAccs.some(function(c){ return _demSid(d.demandeurId,c.id); })) return true;
+      return collabAccs.some(function(c){ return _demBelongsToUser(d,c); });
+    });
+  }
+  return demandes.filter(function(d){ return _demBelongsToUser(d,cu); });
+}
+function lierDemandesAuCompte(cu){
+  if(!cu||cu.id==null||cu.id==='') return;
+  var dems=gDemandes();
+  var changed=false;
+  dems.forEach(function(d){
+    if(!_demBelongsToUser(d,cu)) return;
+    if(!_demSid(d.demandeurId,cu.id)){ d.demandeurId=cu.id; changed=true; }
+    if(cu.username&&d.demandeurUsername!==cu.username){ d.demandeurUsername=cu.username; changed=true; }
+    if(cu.name&&_normDemStr(d.demandeurNom)!==_normDemStr(cu.name)){ d.demandeurNom=cu.name; changed=true; }
+    if(cu.email&&d.demandeurEmail!==cu.email){ d.demandeurEmail=cu.email; changed=true; }
+    if(_demIsUrgente(d)&&d.typeUrgent!==true){ d.typeUrgent=true; changed=true; }
+  });
+  if(changed) saveDemandes(dems);
+}
+window._demBelongsToUser=_demBelongsToUser;
+window._demIsUrgente=_demIsUrgente;
+window.demandesVisiblesPour=demandesVisiblesPour;
+window.lierDemandesAuCompte=lierDemandesAuCompte;
+
 // Statuts du circuit
 var STATUTS = {
   en_attente:  { label: '⏳ En attente',     color: '#6B7280', bg: '#F3F4F6' },
@@ -23525,9 +23594,8 @@ window.renderDemandesPage = function(){
       return _collabs.some(function(cid){ return String(cid) === String(d.demandeurId); });
     });
   } else {
-    // Demandeur / Lecteur / Opérateur : uniquement ses propres demandes
-    visible = demandes.filter(function(d){
-      return String(d.demandeurId) === String(cu.id) || (d.demandeurNom||'').trim().toLowerCase() === (cu.name||'').trim().toLowerCase();
+    visible = (typeof demandesVisiblesPour==='function') ? demandesVisiblesPour(cu,demandes) : demandes.filter(function(d){
+      return _demBelongsToUser(d,cu);
     });
   }
 
@@ -23671,9 +23739,7 @@ window.modifierDemande = function(id){
   var d = demandes.find(function(x){ return x.id===id; });
   var cu = (typeof CU !== 'undefined') ? CU : null;
   if(!d || !cu) return;
-  var isOwner = String(d.demandeurId) === String(cu.id) ||
-    (d.demandeurNom||'').trim().toLowerCase() === (cu.name||'').trim().toLowerCase();
-  if(!isOwner){
+  if(!_demBelongsToUser(d,cu)){
     if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
     return;
   }
@@ -23738,6 +23804,7 @@ window.saveDemande = function(){
     ref: ref,
     demandeurId: cu ? cu.id : 0,
     demandeurNom: nom,
+    demandeurUsername: cu ? (cu.username || '') : '',
     demandeurEmail: cu ? (cu.email || '') : '',
     service: service,
     dateDepart: dateDepart,
@@ -23756,9 +23823,7 @@ window.saveDemande = function(){
     updatedAt: new Date().toISOString()
   };
   if(isEdit){
-    var canEditOwn = String(existing.demandeurId) === String(cu ? cu.id : 0) ||
-      (existing.demandeurNom||'').trim().toLowerCase() === (cu && cu.name ? cu.name : '').trim().toLowerCase();
-    if(!canEditOwn){
+    if(!_demBelongsToUser(existing,cu)){
       if(typeof showT==='function') showT('⚠️ Vous ne pouvez modifier que vos propres demandes','w');
       return;
     }
@@ -24078,10 +24143,7 @@ window.voirDetailDemande = function(id){
     var cu = (typeof CU !== 'undefined') ? CU : null;
     var canCloture = (d.statut === 'en_cours' || (d.statut === 'approuve' && d.vehiculeAffecte)) && d.statut !== 'termine';
     var isLog = cu && (cu.role === 'admin' || cu.role === 'manager');
-    var isOwner = cu && (
-      String(d.demandeurId) === String(cu.id) ||
-      ((d.demandeurNom||'').trim().toLowerCase() === (cu.name||'').trim().toLowerCase())
-    );
+    var isOwner = cu && _demBelongsToUser(d,cu);
     var canEdit = (cu && cu.role === 'demandeur' || isOwner) && ['en_attente','approuve','rejete'].indexOf(d.statut) >= 0;
     mf.innerHTML = '<button class="btn bg" onclick="closeM(\'detail-demande\')">Fermer</button>' +
       (canEdit ? '<button class="btn bp" onclick="closeM(\'detail-demande\');setTimeout(function(){modifierDemande('+d.id+');},80)">✏️ Modifier</button>' : '') +
@@ -24878,6 +24940,10 @@ window.approuverInscription = function(id){
 
   if(typeof addLog==='function') addLog('accounts','Compte approuvé via inscription: @'+req.username);
   if(typeof showT==='function') showT('✅ Compte @'+req.username+' créé et activé !','s');
+  try{
+    var newAcc=accs[accs.length-1];
+    if(newAcc&&typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(newAcc);
+  }catch(e){}
 
   // Sync serveur
   if(typeof pushToServer==='function'){
@@ -27432,18 +27498,20 @@ function gCC(){try{return Object.assign({plafond:5,actif:false},JSON.parse(local
 function sCC(c){localStorage.setItem(K_CC,JSON.stringify(c));}
 function sid(a,b){return a!=null&&b!=null&&String(a)!==''&&String(b)!==''&&String(a)===String(b);}
 function collabsDe(appId){return gAccL().filter(function(u){return u.active!==false&&u.approbateurId&&sid(u.approbateurId,appId);});}
-function _demIsUrgente(d){return d&&(d.typeUrgent===true||d.urgence==='urgente');}
-function _demBelongsToUser(d,cu){
-  if(!d||!cu)return false;
-  if(sid(d.demandeurId,cu.id))return true;
-  return (d.demandeurNom||'').trim().toLowerCase()===(cu.name||'').trim().toLowerCase();
-}
 function nbUrg(uid,cu){
   var now=new Date();
   var user=cu||(typeof CU!=='undefined'?CU:null);
+  var belongs=(typeof window._demBelongsToUser==='function')?window._demBelongsToUser:function(d,u){
+    if(!d||!u)return false;
+    if(sid(d.demandeurId,u.id))return true;
+    return (d.demandeurNom||'').trim().toLowerCase()===(u.name||'').trim().toLowerCase();
+  };
+  var isUrg=(typeof window._demIsUrgente==='function')?window._demIsUrgente:function(d){
+    return d&&(d.typeUrgent===true||d.urgence==='urgente');
+  };
   return gDemandesL().filter(function(d){
-    if(!_demIsUrgente(d)||['annule','rejete'].indexOf(d.statut)>=0)return false;
-    var match=user?_demBelongsToUser(d,user):sid(d.demandeurId,uid);
+    if(!isUrg(d)||['annule','rejete'].indexOf(d.statut)>=0)return false;
+    var match=user?belongs(d,user):sid(d.demandeurId,uid);
     if(!match)return false;
     try{var t=new Date(d.createdAt||d.dateDepart||'');return t.getMonth()===now.getMonth()&&t.getFullYear()===now.getFullYear();}catch(e){return false;}
   }).length;
@@ -27491,10 +27559,11 @@ window.showPage=function(p){
 
 // ── _afterLogin ────────────────────────────────────────────────────────
 var _origAL=window._afterLogin;
-window._afterLogin=function(acc,btn){
-  if(_origAL)_origAL(acc,btn);
-  // Appliquer les restrictions de navigation à plusieurs instants pour contrer les overrides tardifs
-  var _role=acc.role;
+  window._afterLogin=function(acc,btn){
+    if(_origAL)_origAL(acc,btn);
+    try{ if(typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(acc); }catch(e){}
+    // Appliquer les restrictions de navigation à plusieurs instants pour contrer les overrides tardifs
+    var _role=acc.role;
   setTimeout(function(){_applyNav(_role);},80);
   setTimeout(function(){_applyNav(_role);},300);
   setTimeout(function(){_applyNav(_role);},600);
@@ -27534,27 +27603,14 @@ window.renderDemandesPage = function(){
 
   var isA = cu.role==='admin'||cu.role==='manager';
   var isP = cu.role==='approbateur';
-  var isD = !isA&&!isP;
+  var isD = cu.role==='demandeur'||(!isA&&!isP&&cu.role!=='reader');
 
-  // Filtrage robuste: String comparison + fallback nom
-  var vis = demandes;
-  if(isA){
-    vis = demandes;
-  } else if(isP){
-    var _cl = gAccL().filter(function(a){
-      return a.active!==false&&String(a.approbateurId)===String(cu.id)&&a.approbateurId;
-    }).map(function(a){return a.id;});
-    vis = demandes.filter(function(d){
-      return _cl.some(function(cid){return String(cid)===String(d.demandeurId);});
-    });
-  } else {
-    vis = demandes.filter(function(d){
-      return String(d.demandeurId)===String(cu.id)||(d.demandeurNom||'').trim().toLowerCase()===(cu.name||'').trim().toLowerCase();
-    });
-  }
-
+  try{ if(typeof lierDemandesAuCompte==='function') lierDemandesAuCompte(cu); }catch(e){}
+  var vis = (typeof demandesVisiblesPour==='function') ? demandesVisiblesPour(cu,demandes) : demandes;
   var att = vis.filter(function(d){return d.statut==='en_attente';});
-  var urg = vis.filter(function(d){return d.typeUrgent===true||d.urgence==='urgente';});
+  var urg = vis.filter(function(d){
+    return (typeof window._demIsUrgente==='function')?window._demIsUrgente(d):(d.typeUrgent===true||d.urgence==='urgente');
+  });
   var cfg = (typeof gCC==='function')?gCC():{plafond:5,actif:false};
 
   // KPIs
@@ -27653,7 +27709,7 @@ window.renderDemandesPage = function(){
       if((isA||isP)&&d.statut==='en_attente') btn+='<button class="abe" style="color:#059669" onclick="approuverDemande('+d.id+')" title="Approuver">\u2705</button><button class="abe" style="color:#DC2626" onclick="rejeterDemande('+d.id+')" title="Rejeter">\u274C</button>';
       if(isA&&d.statut==='approuve') btn+='<button class="abe" style="color:#1D4ED8" onclick="affecterVehicule('+d.id+')" title="Affecter">\uD83D\uDE97</button>';
       if(isA&&(d.statut==='en_attente'||d.statut==='approuve')) btn+='<button class="abe" style="color:#9CA3AF" onclick="annulerDemande('+d.id+')" title="Annuler">\uD83D\uDEAB</button>';
-      else if(isD&&String(d.demandeurId)===String(cu.id)&&d.statut==='en_attente') btn+='<button class="abe" style="color:#9CA3AF" onclick="annulerDemande('+d.id+')" title="Annuler">\uD83D\uDEAB</button>';
+      else if(isD&&(typeof window._demBelongsToUser==='function'?window._demBelongsToUser(d,cu):String(d.demandeurId)===String(cu.id))&&d.statut==='en_attente') btn+='<button class="abe" style="color:#9CA3AF" onclick="annulerDemande('+d.id+')" title="Annuler">\uD83D\uDEAB</button>';
       btn+='<button class="abe" onclick="voirDetailDemande('+d.id+')" title="D\u00e9tail">\uD83D\uDC41</button>';
       return '<tr>'+
         '<td style="font-family:monospace;font-size:10px;color:var(--maroon);font-weight:700">'+(isUrg?'\uD83D\uDEA8 ':'')+d.ref+'</td>'+
@@ -27701,7 +27757,9 @@ function _kc(l,v,c){return '<div class="kc"><div class="kl">'+l+'</div><div clas
 function _html(vis,cu,isA,isP,isD){
   var tab=window._pplT||'toutes';
   var cfg=gCC();
-  var urg=vis.filter(function(d){return d.typeUrgent===true;});
+  var urg=vis.filter(function(d){
+    return (typeof window._demIsUrgente==='function')?window._demIsUrgente(d):(d.typeUrgent===true||d.urgence==='urgente');
+  });
   var att=vis.filter(function(d){return d.statut==='en_attente';});
   var tri=vis.slice().sort(function(a,b){return (b.createdAt||'')>(a.createdAt||'')?1:-1;});
 
@@ -27742,7 +27800,7 @@ function _tb(key,label,n,c,tab){
 }
 
 function _table(list,cu,isA,isP,title){
-  var isD=!isA&&!isP;
+  var isD=cu.role==='demandeur'||(!isA&&!isP&&cu.role!=='reader');
   var fD=function(s){if(!s)return '\u2014';try{return new Date(s).toLocaleDateString('fr-FR');}catch(e){return s;}};
   var SL={en_attente:'En attente',approuve:'Approuv\u00e9e',rejete:'Rejet\u00e9e',en_cours:'En cours',termine:'Termin\u00e9e',annule:'Annul\u00e9e'};
   var SC={en_attente:'#F59E0B',approuve:'#059669',rejete:'#DC2626',en_cours:'#3B82F6',termine:'#6B7280',annule:'#9CA3AF'};
@@ -27751,7 +27809,7 @@ function _table(list,cu,isA,isP,title){
     var b='';
     if((isA||isP)&&d.statut==='en_attente')b+='<button class="abe" style="color:#059669" onclick="approuverDemande('+d.id+')" title="Approuver">\u2705</button><button class="abe" style="color:#DC2626" onclick="rejeterDemande('+d.id+')" title="Rejeter">\u274C</button>';
     if(isA&&(d.statut==='approuve'||d.statut==='en_attente'))b+='<button class="abe" style="color:#1D4ED8" onclick="affecterVehicule('+d.id+')" title="Affecter">\uD83D\uDE97</button>';
-    if(isD&&['en_attente','approuve','rejete'].indexOf(d.statut)>=0)b+='<button class="abe" style="color:#1D4ED8" onclick="modifierDemande('+d.id+')" title="Modifier">\u270F\uFE0F</button>';
+    if(isD&&(typeof window._demBelongsToUser==='function'?window._demBelongsToUser(d,cu):true)&&['en_attente','approuve','rejete'].indexOf(d.statut)>=0)b+='<button class="abe" style="color:#1D4ED8" onclick="modifierDemande('+d.id+')" title="Modifier">\u270F\uFE0F</button>';
     b+='<button class="abe" onclick="voirDetailDemande('+d.id+')" title="D\u00e9tail">\uD83D\uDC41</button>';
     return '<tr>'+
       '<td style="font-family:monospace;font-size:10px;color:var(--maroon);font-weight:700">'+(d.typeUrgent?'\uD83D\uDEA8 ':'')+d.ref+'</td>'+
@@ -27759,7 +27817,7 @@ function _table(list,cu,isA,isP,title){
       '<td style="font-size:10px;color:var(--t3)">'+(d.service||'\u2014')+'</td>'+
       '<td style="font-size:10px;white-space:nowrap">'+fD(d.dateDepart)+(d.heureDepart?' '+d.heureDepart:'')+'</td>'+
       '<td style="font-size:11px;font-weight:600;color:var(--maroon)">'+(d.destination||'\u2014')+'</td>'+
-      '<td><span style="background:'+(d.typeUrgent?'#DC262620':'#05996920')+';color:'+(d.typeUrgent?'#DC2626':'#059669')+';padding:2px 7px;border-radius:99px;font-size:9px;font-weight:700">'+(d.typeUrgent?'\uD83D\uDD34 Urgente':'\uD83D\uDFE2 Normale')+'</span></td>'+
+      '<td><span style="background:'+((d.typeUrgent||d.urgence==='urgente')?'#DC262620':'#05996920')+';color:'+((d.typeUrgent||d.urgence==='urgente')?'#DC2626':'#059669')+';padding:2px 7px;border-radius:99px;font-size:9px;font-weight:700">'+((d.typeUrgent||d.urgence==='urgente')?'\uD83D\uDD34 Urgente':'\uD83D\uDFE2 Normale')+'</span></td>'+
       '<td><span style="background:'+stC+'20;color:'+stC+';padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700">'+stL+'</span></td>'+
       (isA?'<td style="font-size:9px;color:var(--t3)">'+(d.approbateurNom||'Admin')+'</td>':'<td style="font-size:10px">'+(d.vehiculeAffecte||'\u2014')+'</td>')+
       '<td><div class="ab-row">'+b+'</div></td></tr>';
@@ -27869,7 +27927,7 @@ window._PPL_submitUrgente=function(){
   var dems=(typeof gDemandes==='function')?gDemandes():[];
   var now2=(typeof uid==='function')?uid():Date.now();
   var ref='URG-'+new Date().toISOString().replace(/\D/g,'').slice(0,14)+'-'+String(dems.length+1).padStart(3,'0');
-  dems.push({id:now2,ref:ref,demandeurId:cu.id,demandeurNom:cu.name,service:(cu.dept||me&&me.dept)||'',dateDepart:dtV.split('T')[0]||'',heureDepart:dtV.split('T')[1]||'',destination:dst,motif:mot,passagers:parseInt(((g('ppl-u-pax')||{}).value)||1),urgence:'urgente',typeUrgent:true,vehiculePref:((g('ppl-u-veh')||{}).value||''),notes:((g('ppl-u-nts')||{}).value||''),approbateurId:appId,approbateurNom:app?app.name:'Admin',statut:'en_attente',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+  dems.push({id:now2,ref:ref,demandeurId:cu.id,demandeurNom:cu.name,demandeurUsername:cu.username||'',demandeurEmail:cu.email||'',service:(cu.dept||(me&&me.dept)||''),dateDepart:dtV.split('T')[0]||'',heureDepart:dtV.split('T')[1]||'',destination:dst,motif:mot,passagers:parseInt(((g('ppl-u-pax')||{}).value)||1),urgence:'urgente',typeUrgent:true,vehiculePref:((g('ppl-u-veh')||{}).value||''),notes:((g('ppl-u-nts')||{}).value||''),approbateurId:appId,approbateurNom:app?app.name:'Admin',statut:'en_attente',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
   if(typeof saveDemandes==='function'){
     saveDemandes(dems);
   } else if(typeof window.saveDemandes==='function'){
