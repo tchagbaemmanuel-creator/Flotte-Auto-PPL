@@ -329,6 +329,19 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 
 /* TABLE */
 .tw{overflow-x:auto;}
+.fuel-ops-scroll{
+  overflow-x:auto;
+  overflow-y:visible;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:auto;
+}
+.card-fuel-ops{overflow:visible;}
+#fuel-tab-content .fuel-ops-scroll thead th{
+  position:sticky;
+  top:0;
+  z-index:2;
+  box-shadow:0 1px 0 var(--bd);
+}
 table{width:100%;border-collapse:collapse;min-width:500px;}
 th{font-family:'DM Mono',monospace;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#5A3A1A;padding:8px 12px;text-align:left;border-bottom:2px solid var(--bd);background:#F5EDD8;white-space:nowrap;}
 td{padding:8.5px 12px;font-size:11.5px;border-bottom:1px solid var(--bd);vertical-align:middle;color:#1A0A0A;background:#fff;}
@@ -5947,15 +5960,8 @@ function renderFuelTable(){
       switchFuelTab('ops');
       return;
     }
-    // Rafraîchir uniquement l'onglet Opérations si c'est l'onglet actif
-    if((window._fuelActiveTab||'ops')==='ops'&&document.getElementById('fuel-body')){
-      var filt=(document.getElementById('fuel-op-filter')||{}).value||'';
-      switchFuelTab('ops');
-      if(filt){
-        var sel=document.getElementById('fuel-op-filter');
-        if(sel) sel.value=filt;
-      }
-    }
+    // Rafraîchir uniquement le tbody si on est déjà sur Opérations (préserve le scroll page)
+    if((window._fuelActiveTab||'ops')==='ops'&&refreshFuelOpsList()) return;
     return;
   }
   var fs=gF(); var tb=document.getElementById('fuel-body');
@@ -15961,6 +15967,43 @@ function togglePinVis(inputId, btnId){
 }
 
 // ── ONGLETS CARBURANT ──
+function _fuelOpsBuildRows(fuels, tf){
+  var list=fuels.slice().reverse();
+  if(tf) list=list.filter(function(f){ return normalizeFuelType(f.typeCarb)===normalizeFuelType(tf); });
+  var rowsHtml=list.length?list.map(function(f){
+    var v=getV(f.vehicleId); var d=f.driverId?getD(f.driverId):null;
+    return '<tr>'+
+      '<td style="font-size:10px;white-space:nowrap">'+fmtD(f.date)+'</td>'+
+      '<td>'+(v?'<div class="vp" style="font-size:10px">'+v.plate+'</div>':'—')+'</td>'+
+      '<td style="font-size:11px">'+(d?d.name:'—')+'</td>'+
+      '<td>'+fuelTypeChip(f.typeCarb)+'</td>'+
+      '<td style="font-family:monospace;font-size:10px">'+(f.carte||'—')+'</td>'+
+      '<td style="font-family:monospace;font-weight:700;color:var(--gold)">'+(f.liters?f.liters+'L':'—')+'</td>'+
+      '<td style="font-family:monospace;font-size:10px;color:var(--r)">'+(f.cost?fmt(f.cost)+' F':'—')+'</td>'+
+      '<td style="font-size:10px">'+(f.station||'—')+'</td>'+
+      '<td style="font-family:monospace;font-size:10px">'+(f.km?fmt(f.km)+' km':'—')+'</td>'+
+      '<td>'+(f.recuB64||f.recu||f.docB64||f.photo?'<button class="ab aba" onclick="showRecuFuel(\''+f.id+'\')">🧾</button>':'—')+'</td>'+
+      '<td><div class="ab-row">'+
+        '<button class="abe" onclick="editFuel('+f.id+')" title="Modifier">✏️</button>'+
+        (CU&&CU.role!=='reader'?'<button class="abe" style="color:var(--r)" onclick="delFuel('+f.id+')">🗑</button>':'')+
+      '</div></td>'+
+    '</tr>';
+  }).join(''):'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--t3)">Aucune opération enregistrée</td></tr>';
+  return { rowsHtml: rowsHtml, count: list.length };
+}
+
+function refreshFuelOpsList(){
+  var tb=document.getElementById('fuel-body');
+  if(!tb) return false;
+  var tfEl=document.getElementById('fuel-op-filter');
+  var tf=tfEl?tfEl.value:'';
+  var built=_fuelOpsBuildRows(gF(), tf);
+  tb.innerHTML=built.rowsHtml;
+  var cnt=document.getElementById('fuel-ops-count');
+  if(cnt) cnt.textContent=built.count+' opération(s)';
+  return true;
+}
+
 function switchFuelTab(tab){
   window._fuelActiveTab = tab;
   try{ migrateFuelTypes(); }catch(e){}
@@ -15975,35 +16018,14 @@ function switchFuelTab(tab){
   if(!content) return;
 
   if(tab==='ops'){
-    var fuels=gF();
     var tfEl=document.getElementById('fuel-op-filter');
     var tf=tfEl?tfEl.value:'';
-    var list=fuels.slice().reverse();
-    if(tf) list=list.filter(function(f){ return normalizeFuelType(f.typeCarb)===normalizeFuelType(tf); });
-    var rowsHtml=list.length?list.map(function(f){
-      var v=getV(f.vehicleId); var d=f.driverId?getD(f.driverId):null;
-      return '<tr>'+
-        '<td style="font-size:10px;white-space:nowrap">'+fmtD(f.date)+'</td>'+
-        '<td>'+(v?'<div class="vp" style="font-size:10px">'+v.plate+'</div>':'—')+'</td>'+
-        '<td style="font-size:11px">'+(d?d.name:'—')+'</td>'+
-        '<td>'+fuelTypeChip(f.typeCarb)+'</td>'+
-        '<td style="font-family:monospace;font-size:10px">'+(f.carte||'—')+'</td>'+
-        '<td style="font-family:monospace;font-weight:700;color:var(--gold)">'+(f.liters?f.liters+'L':'—')+'</td>'+
-        '<td style="font-family:monospace;font-size:10px;color:var(--r)">'+(f.cost?fmt(f.cost)+' F':'—')+'</td>'+
-        '<td style="font-size:10px">'+(f.station||'—')+'</td>'+
-        '<td style="font-family:monospace;font-size:10px">'+(f.km?fmt(f.km)+' km':'—')+'</td>'+
-        '<td>'+(f.recuB64||f.recu||f.docB64||f.photo?'<button class="ab aba" onclick="showRecuFuel(\''+f.id+'\')">🧾</button>':'—')+'</td>'+
-        '<td><div class="ab-row">'+
-          '<button class="abe" onclick="editFuel('+f.id+')" title="Modifier">✏️</button>'+
-          (CU&&CU.role!=='reader'?'<button class="abe" style="color:var(--r)" onclick="delFuel('+f.id+')">🗑</button>':'')+
-        '</div></td>'+
-      '</tr>';
-    }).join(''):'<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--t3)">Aucune opération enregistrée</td></tr>';
+    var built=_fuelOpsBuildRows(gF(), tf);
     content.innerHTML=
-      '<div class="card">'+
+      '<div class="card card-fuel-ops">'+
       '<div class="ch"><div class="ct"><span class="dot"></span>Historique des opérations carburant</div>'+
       '<div style="display:flex;gap:7px;align-items:center">'+
-        '<span style="font-size:10px;color:var(--t3)">'+list.length+' opération(s)</span>'+
+        '<span id="fuel-ops-count" style="font-size:10px;color:var(--t3)">'+built.count+' opération(s)</span>'+
         '<select class="fi" id="fuel-op-filter" onchange="switchFuelTab(\'ops\')" style="width:auto;padding:5px;font-size:11px">'+
           '<option value="">Tous types</option>'+
           '<option value="essence">Essence</option>'+
@@ -16011,10 +16033,10 @@ function switchFuelTab(tab){
           '<option value="lavage">Lavage</option>'+
         '</select>'+
       '</div></div>'+
-      '<div class="tw" style="max-height:65vh;overflow:auto"><table><thead><tr>'+
+      '<div class="tw fuel-ops-scroll"><table><thead><tr>'+
         '<th>Date</th><th>Véhicule</th><th>Conducteur</th><th>Type op.</th>'+
         '<th>N° Carte</th><th>Litres</th><th>Coût (FCFA)</th><th>Station</th><th>KM</th><th>Reçu</th><th>Actions</th>'+
-      '</tr></thead><tbody id="fuel-body">'+rowsHtml+'</tbody></table></div></div>';
+      '</tr></thead><tbody id="fuel-body">'+built.rowsHtml+'</tbody></table></div></div>';
     var sel=document.getElementById('fuel-op-filter');
     if(sel&&tf) sel.value=tf;
     try{ updFuelStats(); }catch(e){}
