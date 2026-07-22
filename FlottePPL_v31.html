@@ -18491,7 +18491,7 @@ function importFuelPlanning(input){
   var ext=name.split('.').pop().toLowerCase();
   showT('📄 "'+name+'" chargé','s');
   if(['jpg','jpeg','png'].includes(ext)){
-    readB64(file).then(function(b64){
+    readB64(file).then(function(      b64){
       openAddFuelPlan(name);
       setTimeout(function(){
         var modal=document.getElementById('mo-add-fuel-plan');
@@ -23876,6 +23876,183 @@ window.saveDemande = function(){
   renderDemandesPage();
 };
 
+// ══════════════════════════════════════════════════════════════════════
+// PLANNING DE COURSE (hebdomadaire / mensuel) — génère plusieurs demandes
+// ══════════════════════════════════════════════════════════════════════
+var PLANNING_JOURS = ['lundi','mardi','mercredi','jeudi','vendredi','samedi','dimanche'];
+var PLANNING_JOURS_LABEL = {lundi:'Lundi',mardi:'Mardi',mercredi:'Mercredi',jeudi:'Jeudi',vendredi:'Vendredi',samedi:'Samedi',dimanche:'Dimanche'};
+var _planRows = [];
+var _planRowSeq = 1;
+
+function _planEsc(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); }
+
+function _planRowsHtml(){
+  var type = (document.getElementById('plan-type')||{}).value || 'hebdo';
+  if(!_planRows.length) return '<div style="text-align:center;padding:14px;color:var(--t3);font-size:11px;border:1px dashed var(--bd,#E5E7EB);border-radius:8px">Aucun créneau — cliquez sur « + Ajouter un créneau »</div>';
+  return '<div class="tw"><table><thead><tr>'+
+      '<th>'+(type==='hebdo'?'Jour de la semaine':'Jour du mois')+'</th><th>Heure</th><th>Destination</th><th>Motif</th><th>Pass.</th><th></th>'+
+    '</tr></thead><tbody>'+
+    _planRows.map(function(r){
+      var quandInput = (type==='hebdo') ?
+        '<select class="fi" style="font-size:11px;padding:4px" onchange="_planUpdateRow('+r.id+',\'quand\',this.value)">'+
+          PLANNING_JOURS.map(function(j){ return '<option value="'+j+'"'+(r.quand===j?' selected':'')+'>'+PLANNING_JOURS_LABEL[j]+'</option>'; }).join('')+
+        '</select>' :
+        '<input class="fi" type="number" min="1" max="31" style="font-size:11px;padding:4px;width:64px" value="'+(parseInt(r.quand)||1)+'" onchange="_planUpdateRow('+r.id+',\'quand\',this.value)">';
+      return '<tr>'+
+        '<td>'+quandInput+'</td>'+
+        '<td><input class="fi" type="time" style="font-size:11px;padding:4px" value="'+_planEsc(r.heure)+'" onchange="_planUpdateRow('+r.id+',\'heure\',this.value)"></td>'+
+        '<td><input class="fi" style="font-size:11px;padding:4px" placeholder="Destination" value="'+_planEsc(r.destination)+'" onchange="_planUpdateRow('+r.id+',\'destination\',this.value)"></td>'+
+        '<td><input class="fi" style="font-size:11px;padding:4px" placeholder="Motif" value="'+_planEsc(r.motif)+'" onchange="_planUpdateRow('+r.id+',\'motif\',this.value)"></td>'+
+        '<td><input class="fi" type="number" min="1" max="25" style="font-size:11px;padding:4px;width:52px" value="'+(parseInt(r.passagers)||1)+'" onchange="_planUpdateRow('+r.id+',\'passagers\',this.value)"></td>'+
+        '<td><button class="abe" style="color:var(--r)" onclick="_planRemoveRow('+r.id+')" title="Supprimer ce créneau">🗑</button></td>'+
+      '</tr>';
+    }).join('')+
+    '</tbody></table></div>';
+}
+
+window._planRenderRows = function(){
+  var el = document.getElementById('plan-rows-body');
+  if(el) el.innerHTML = _planRowsHtml();
+};
+
+window._planAddRow = function(){
+  var type = (document.getElementById('plan-type')||{}).value || 'hebdo';
+  _planRows.push({ id:_planRowSeq++, quand: type==='hebdo' ? 'lundi' : 1, heure:'08:00', destination:'', motif:'', passagers:1 });
+  window._planRenderRows();
+};
+
+window._planRemoveRow = function(id){
+  _planRows = _planRows.filter(function(r){ return r.id!==id; });
+  window._planRenderRows();
+};
+
+window._planUpdateRow = function(id, field, value){
+  var r = _planRows.find(function(r){ return r.id===id; });
+  if(!r) return;
+  r[field] = value;
+};
+
+window._planTypeChanged = function(){
+  var type = (document.getElementById('plan-type')||{}).value;
+  _planRows.forEach(function(r){ r.quand = type==='hebdo' ? 'lundi' : 1; });
+  window._planRenderRows();
+};
+
+window.openPlanningCourseModal = function(){
+  var mo = document.getElementById('mo-planning-course');
+  if(!mo) return;
+  var cu = (typeof CU !== 'undefined') ? CU : null;
+  var accs = (typeof gAcc==='function') ? gAcc() : [];
+  var me = cu ? accs.find(function(a){ return String(a.id)===String(cu.id) || (a.username&&cu.username&&String(a.username).toLowerCase()===String(cu.username).toLowerCase()); }) : null;
+  document.getElementById('plan-nom').value = cu ? cu.name : '';
+  document.getElementById('plan-service').value = me ? (me.service||'') : '';
+  document.getElementById('plan-type').value = 'hebdo';
+  document.getElementById('plan-date-debut').value = '';
+  document.getElementById('plan-date-fin').value = '';
+  document.getElementById('plan-urgence').value = 'normale';
+  document.getElementById('plan-vehicule-pref').value = '';
+  document.getElementById('plan-notes').value = '';
+  _planRows = []; _planRowSeq = 1;
+  _planRows.push({ id:_planRowSeq++, quand:'lundi', heure:'08:00', destination:'', motif:'', passagers:1 });
+  window._planRenderRows();
+  mo.classList.add('open');
+};
+
+function _planPad(n){ return n<10 ? '0'+n : ''+n; }
+function _planFmtDate(d){ return d.getFullYear()+'-'+_planPad(d.getMonth()+1)+'-'+_planPad(d.getDate()); }
+
+window.genererPlanningCourse = function(){
+  var cu = (typeof CU !== 'undefined') ? CU : null;
+  var nom = document.getElementById('plan-nom').value.trim();
+  var service = document.getElementById('plan-service').value.trim();
+  var type = document.getElementById('plan-type').value;
+  var dDebut = document.getElementById('plan-date-debut').value;
+  var dFin = document.getElementById('plan-date-fin').value;
+  var urgenceVal = document.getElementById('plan-urgence').value;
+  var vehiculePref = document.getElementById('plan-vehicule-pref').value.trim();
+  var notes = document.getElementById('plan-notes').value.trim();
+
+  if(!nom){ if(typeof showT==='function') showT('⚠️ Votre nom est requis','w'); return; }
+  if(!service){ if(typeof showT==='function') showT('⚠️ Le service / département est requis','w'); return; }
+  if(!dDebut || !dFin){ if(typeof showT==='function') showT('⚠️ Indiquez la période (du / au)','w'); return; }
+  if(dFin < dDebut){ if(typeof showT==='function') showT('⚠️ La date de fin doit être après la date de début','w'); return; }
+  if(!_planRows.length){ if(typeof showT==='function') showT('⚠️ Ajoutez au moins un créneau','w'); return; }
+  var invalidRow = _planRows.some(function(r){ return !r.destination || !r.destination.trim() || !r.motif || !r.motif.trim(); });
+  if(invalidRow){ if(typeof showT==='function') showT('⚠️ Chaque créneau doit avoir une destination et un motif','w'); return; }
+
+  var start = new Date(dDebut+'T00:00:00');
+  var end   = new Date(dFin+'T00:00:00');
+  var maxEnd = new Date(start); maxEnd.setFullYear(maxEnd.getFullYear()+1);
+  if(end > maxEnd){ if(typeof showT==='function') showT('⚠️ La période ne peut pas dépasser 1 an','w'); return; }
+
+  var occurrences = [];
+  if(type === 'hebdo'){
+    var jourIdx = {dimanche:0,lundi:1,mardi:2,mercredi:3,jeudi:4,vendredi:5,samedi:6};
+    _planRows.forEach(function(r){
+      var target = jourIdx[r.quand];
+      var cur = new Date(start);
+      while(cur <= end){
+        if(cur.getDay() === target) occurrences.push({ date:new Date(cur), row:r });
+        cur.setDate(cur.getDate()+1);
+      }
+    });
+  } else {
+    _planRows.forEach(function(r){
+      var day = parseInt(r.quand)||1;
+      var cur = new Date(start.getFullYear(), start.getMonth(), 1);
+      var endCap = new Date(end.getFullYear(), end.getMonth(), 1);
+      while(cur <= endCap){
+        var lastDay = new Date(cur.getFullYear(), cur.getMonth()+1, 0).getDate();
+        var d = Math.min(day, lastDay);
+        var occ = new Date(cur.getFullYear(), cur.getMonth(), d);
+        if(occ >= start && occ <= end) occurrences.push({ date:occ, row:r });
+        cur.setMonth(cur.getMonth()+1);
+      }
+    });
+  }
+
+  if(!occurrences.length){ if(typeof showT==='function') showT('⚠️ Aucune occurrence sur cette période','w'); return; }
+  if(occurrences.length > 200){ if(typeof showT==='function') showT('⚠️ Trop d\'occurrences ('+occurrences.length+') — réduisez la période','w'); return; }
+
+  occurrences.sort(function(a,b){ return a.date - b.date; });
+
+  var demandes = gDemandes();
+  var accs = (typeof gAcc==='function') ? gAcc() : [];
+  var me = cu ? accs.find(function(a){ return String(a.id)===String(cu.id) || (a.username&&cu.username&&String(a.username).toLowerCase()===String(cu.username).toLowerCase()); }) : null;
+  var appId = me ? (me.approbateurId||0) : 0;
+  var app = appId ? accs.find(function(a){ return String(a.id)===String(appId); }) : null;
+
+  var planningRef = 'PLN-'+Date.now();
+  var baseId = Date.now();
+  occurrences.forEach(function(occ, i){
+    var r = occ.row;
+    var id = baseId + i;
+    demandes.push({
+      id: id, ref: 'DEM-'+id,
+      demandeurId: cu ? cu.id : 0, demandeurNom: nom,
+      demandeurUsername: cu ? (cu.username||'') : '', demandeurEmail: cu ? (cu.email||'') : '',
+      service: service,
+      dateDepart: _planFmtDate(occ.date), heureDepart: r.heure||'',
+      destination: r.destination.trim(), motif: r.motif.trim(),
+      passagers: parseInt(r.passagers)||1,
+      urgence: urgenceVal, typeUrgent: false,
+      vehiculePref: vehiculePref,
+      notes: notes,
+      approbateurId: appId, approbateurNom: app ? app.name : 'Admin',
+      statut: 'en_attente',
+      planningRef: planningRef,
+      planningType: type,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+  });
+
+  saveDemandes(demandes);
+  if(typeof addLog === 'function') addLog('demande','📅 Planning de course '+(type==='hebdo'?'hebdomadaire':'mensuel')+' généré — '+occurrences.length+' demande(s) — Réf '+planningRef);
+  if(typeof showT === 'function') showT('✅ '+occurrences.length+' demande(s) créée(s) à partir du planning','s');
+  document.getElementById('mo-planning-course').classList.remove('open');
+  renderDemandesPage();
+};
+
 function _pplTabHistorique(liste) {
   var SL={en_attente:'En attente',approuve:'Approuvée',rejete:'Rejetée',en_cours:'En cours',termine:'Terminée',annule:'Annulée'};
   var SC={en_attente:'#F59E0B',approuve:'#059669',rejete:'#DC2626',en_cours:'#3B82F6',termine:'#6B7280',annule:'#9CA3AF'};
@@ -24203,6 +24380,7 @@ function injectDemandesPage(){
       '<div class="tr">'+
         ((!isDemandeur) ? '<button class="btn bpdf" onclick="xPDF(\'demandes\')" style="font-size:11px">📄 PDF</button><button class="btn bxls" onclick="xXLS(\'demandes\')" style="font-size:11px">📊 Excel</button>' : '')+
         '<button class="btn bp" onclick="openNouvelleDemandeModal()">+ Nouvelle demande</button>'+
+        '<button class="btn" onclick="openPlanningCourseModal()" style="background:#1D4ED8;color:#fff;border:none;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;cursor:pointer">\uD83D\uDCC5 Planning de course</button>'+
         (isDemandeur||isApprob?'<button class="btn" onclick="window._PPL_openUrgente&&window._PPL_openUrgente()" style="background:#DC2626;color:#fff;border:none;font-size:11px;font-weight:700;padding:7px 14px;border-radius:7px;cursor:pointer">\uD83D\uDEA8 Course urgente</button>':'')+
       '</div>'+
     '</div>'+
@@ -24263,6 +24441,59 @@ function injectDemandesPage(){
       '</div>'+
     '</div>';
   document.body.appendChild(moForm);
+
+  // ── Modal planning de course (hebdomadaire / mensuel) ──
+  var moPlanning = document.createElement('div');
+  moPlanning.className = 'mo'; moPlanning.id = 'mo-planning-course';
+  moPlanning.setAttribute('onclick', "closeModOut(event,'planning-course')");
+  moPlanning.innerHTML =
+    '<div class="md" style="max-width:760px" onclick="event.stopPropagation()">'+
+      '<div class="mh"><div class="mtitle">📅 Planning de course</div>'+
+        '<button class="mx" onclick="closeM(\'planning-course\')">✕</button></div>'+
+      '<div class="mb">'+
+        '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 14px;font-size:11px;color:#1E40AF;margin-bottom:14px">'+
+          'ℹ️ Définissez un planning <strong>hebdomadaire</strong> (ex : tous les lundis et jeudis) ou <strong>mensuel</strong> (ex : le 5 de chaque mois) sur une période donnée. Une demande de course sera automatiquement créée pour chaque occurrence, soumise au circuit d\'approbation habituel.'+
+        '</div>'+
+        '<div class="fg2">'+
+          '<div class="fg"><label class="fl">Votre nom complet *</label><input class="fi" id="plan-nom" placeholder="Prénom Nom"></div>'+
+          '<div class="fg"><label class="fl">Service / Département *</label><input class="fi" id="plan-service" placeholder="ex: Direction, RH, Finance..."></div>'+
+        '</div>'+
+        '<div class="fg3">'+
+          '<div class="fg sp1"><label class="fl">Type de planning *</label>'+
+            '<select class="fi" id="plan-type" onchange="_planTypeChanged()">'+
+              '<option value="hebdo">🔁 Hebdomadaire</option>'+
+              '<option value="mensuel">🗓️ Mensuel</option>'+
+            '</select>'+
+          '</div>'+
+          '<div class="fg sp1"><label class="fl">Période — du *</label><input class="fi" id="plan-date-debut" type="date"></div>'+
+          '<div class="fg sp1"><label class="fl">Période — au *</label><input class="fi" id="plan-date-fin" type="date"></div>'+
+        '</div>'+
+        '<div class="fg" style="margin-top:6px">'+
+          '<label class="fl">Créneaux du planning *</label>'+
+          '<div id="plan-rows-body"></div>'+
+          '<button class="btn bg" style="margin-top:8px;font-size:11px" onclick="_planAddRow()">+ Ajouter un créneau</button>'+
+        '</div>'+
+        '<div class="fg2" style="margin-top:6px">'+
+          '<div class="fg"><label class="fl">Niveau d\'urgence</label>'+
+            '<select class="fi" id="plan-urgence">'+
+              '<option value="normale">🟢 Normale</option>'+
+              '<option value="haute">🟡 Haute</option>'+
+            '</select>'+
+          '</div>'+
+          '<div class="fg"><label class="fl">Véhicule souhaité <span style="font-size:9px;color:var(--t3)">(optionnel)</span></label>'+
+            '<input class="fi" id="plan-vehicule-pref" placeholder="ex: 4×4, bus, berline...">'+
+          '</div>'+
+        '</div>'+
+        '<div class="fg"><label class="fl">Notes complémentaires</label>'+
+          '<textarea class="fi" id="plan-notes" rows="2" placeholder="Informations supplémentaires, contraintes particulières..."></textarea>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mf">'+
+        '<button class="btn bg" onclick="closeM(\'planning-course\')">Annuler</button>'+
+        '<button class="btn bp" onclick="genererPlanningCourse()">📤 Générer le planning</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(moPlanning);
 
   // ── Modal affectation véhicule ──
   var moAffect = document.createElement('div');
